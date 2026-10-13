@@ -1,0 +1,729 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Praxis Desktop - 에이전트 스킬 & UI 정밀 진단기</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body {
+      background-color: #0b0f19;
+      color: #f1f5f9;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    }
+    .custom-scroll::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    .custom-scroll::-webkit-scrollbar-track {
+      background: #111827;
+    }
+    .custom-scroll::-webkit-scrollbar-thumb {
+      background: #374151;
+      border-radius: 3px;
+    }
+    .custom-scroll::-webkit-scrollbar-thumb:hover {
+      background: #4b5563;
+    }
+    .bbox {
+      position: absolute;
+      box-sizing: border-box;
+      pointer-events: auto;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .bbox:hover {
+      background-color: rgba(59, 130, 246, 0.35) !important;
+      border-color: #60a5fa !important;
+      z-index: 50 !important;
+      box-shadow: 0 0 8px rgba(96, 165, 250, 0.8);
+    }
+    .bbox.active {
+      background-color: rgba(239, 68, 68, 0.4) !important;
+      border-color: #f87171 !important;
+      z-index: 60 !important;
+      box-shadow: 0 0 12px rgba(248, 113, 113, 1);
+    }
+  </style>
+</head>
+<body class="h-screen flex flex-col overflow-hidden">
+
+  <!-- 헤더 바 -->
+  <header class="bg-slate-900 border-b border-slate-800 px-5 py-3 flex items-center justify-between shrink-0 shadow-md">
+    <div class="flex items-center space-x-3">
+      <div class="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center font-bold text-white shadow-lg shadow-indigo-500/30">
+        🔬
+      </div>
+      <div>
+        <h1 class="text-base font-bold text-slate-100 flex items-center gap-2">
+          에이전트 스킬 & UI 인식 정밀 진단기
+          <span class="text-xs font-medium px-2 py-0.5 rounded-full bg-indigo-900/60 text-indigo-300 border border-indigo-700/50">
+            임시 독립 디버거
+          </span>
+        </h1>
+        <p class="text-xs text-slate-400">
+          UIA 브라우저 DOM 스캔 정확도 및 Ollama 모델의 Tool Calling 추론 성능 3각 분석 샌드박스
+        </p>
+      </div>
+    </div>
+
+    <div class="flex items-center space-x-3">
+      <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium bg-emerald-950/70 text-emerald-400 border border-emerald-800/60">
+        <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+        FastAPI 연결됨 (포트 8000)
+      </span>
+      <a href="/" target="_blank" class="px-3 py-1.5 text-xs bg-slate-800 hover:bg-slate-700 text-slate-200 rounded border border-slate-700 transition">
+        메인 앱 열기
+      </a>
+    </div>
+  </header>
+
+  <!-- 메인 2단 작업 공간 -->
+  <main class="flex-1 flex min-h-0">
+
+    <!-- 좌측: 윈도우 스캐너 및 인터랙티브 캔버스 (55%) -->
+    <section class="w-7/12 border-r border-slate-800 flex flex-col min-h-0 bg-slate-950/60">
+      
+      <!-- 스캔 제어 바 -->
+      <div class="p-3 bg-slate-900/80 border-b border-slate-800 flex items-center gap-3 shrink-0">
+        <div class="flex-1 min-w-0">
+          <label class="block text-[11px] font-semibold text-slate-400 mb-1">1. 대상 윈도우 선택</label>
+          <div class="flex items-center gap-2">
+            <select id="windowSelect" class="flex-1 bg-slate-800 text-slate-200 text-xs rounded border border-slate-700 px-2 py-1.5 focus:outline-none focus:border-indigo-500">
+              <option value="">윈도우 목록 불러오는 중...</option>
+            </select>
+            <button id="btnRefreshWindows" title="윈도우 목록 새로고침" class="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded border border-slate-700 text-xs transition">
+              🔄
+            </button>
+          </div>
+        </div>
+
+        <div class="shrink-0 flex items-center gap-2 pt-4">
+          <label class="inline-flex items-center gap-1.5 text-xs text-slate-300 cursor-pointer">
+            <input type="checkbox" id="chkBringToFront" class="rounded bg-slate-800 border-slate-700 text-indigo-600 focus:ring-0" checked>
+            스캔 전 창 활성화
+          </label>
+          <button id="btnScan" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold rounded shadow-md shadow-indigo-600/30 flex items-center gap-1.5 transition">
+            <span>🔍</span>
+            <span>화면 UI 요소 스캔</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- 스캔 메타 정보 배지 & RDB OFFSET 페이지네이션 바 -->
+      <div id="scanMetaBar" class="px-4 py-2 bg-slate-900/60 border-b border-slate-800 flex items-center justify-between text-xs text-slate-400 shrink-0">
+        <div class="flex items-center gap-3">
+          <span>대상 창: <strong id="lblTargetTitle" class="text-slate-200">-</strong></span>
+          <span>총 감지: <strong id="lblTotalCount" class="text-indigo-400">0</strong>개</span>
+          <span>스캔 시간: <strong id="lblScanDuration" class="text-emerald-400">-</strong></span>
+        </div>
+
+        <!-- RDB 스타일 OFFSET 페이지네이션 컨트롤 -->
+        <div class="flex items-center gap-2">
+          <button id="btnPrevPage" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 disabled:opacity-30 disabled:cursor-not-allowed text-slate-200 rounded border border-slate-700 text-xs transition" disabled>
+            ◀ 이전 50개
+          </button>
+          <span id="lblPageInfo" class="text-xs font-mono text-slate-300 px-1 bg-slate-950 px-2 py-0.5 rounded border border-slate-800">
+            0 / 0 페이지 (OFFSET: 0)
+          </span>
+          <button id="btnNextPage" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 disabled:opacity-30 disabled:cursor-not-allowed text-slate-200 rounded border border-slate-700 text-xs transition" disabled>
+            다음 50개 ▶
+          </button>
+        </div>
+      </div>
+
+      <!-- 스크린샷 및 오버레이 뷰포트 -->
+      <div class="flex-1 min-h-0 overflow-auto p-4 flex items-center justify-center relative custom-scroll bg-slate-950" id="viewportContainer">
+        <div id="canvasWrapper" class="relative inline-block border border-slate-800 shadow-2xl rounded overflow-hidden max-w-full">
+          <div id="emptyPlaceholder" class="p-16 text-center text-slate-500">
+            <div class="text-4xl mb-3">🖥️</div>
+            <p class="text-sm">스캔할 윈도우를 선택하고 [화면 UI 요소 스캔] 버튼을 누르세요.</p>
+            <p class="text-xs text-slate-600 mt-1">네이버 Chrome 창, 메모장, 파일 탐색기 등 모든 창을 지원합니다.</p>
+          </div>
+          <img id="screenshotImg" class="hidden block max-w-full h-auto select-none" alt="Screen Capture">
+          <div id="overlayLayer" class="absolute inset-0 pointer-events-none"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 우측: UI 요소 인스펙터 & LLM Tool Calling 시뮬레이터 (45%) -->
+    <section class="w-5/12 flex flex-col min-h-0 bg-slate-900">
+
+      <!-- 상단 탭 (감지된 UI 요소 목록) -->
+      <div class="h-1/2 flex flex-col border-b border-slate-800 min-h-0">
+        <div class="p-3 bg-slate-900 border-b border-slate-800 flex items-center justify-between shrink-0">
+          <h2 class="text-xs font-bold text-slate-200 flex items-center gap-2">
+            <span>📋</span>
+            <span>감지된 UI 요소 목록 (UIA DOM)</span>
+            <span id="badgeFilteredCount" class="px-1.5 py-0.5 rounded text-[10px] bg-slate-800 text-slate-300">0개</span>
+          </h2>
+
+          <!-- 실시간 검색창 -->
+          <div class="relative w-44">
+            <input type="text" id="searchElements" placeholder="이름 검색 (예: 증권)" class="w-full bg-slate-800 text-slate-200 text-xs rounded border border-slate-700 px-2 py-1 pr-6 focus:outline-none focus:border-indigo-500">
+            <span class="absolute right-2 top-1.5 text-slate-500 text-xs pointer-events-none">🔎</span>
+          </div>
+        </div>
+
+        <!-- 요소 목록 테이블 -->
+        <div class="flex-1 overflow-auto custom-scroll">
+          <table class="w-full text-left text-xs text-slate-300">
+            <thead class="bg-slate-950/70 text-slate-400 sticky top-0 border-b border-slate-800 z-10 text-[11px]">
+              <tr>
+                <th class="p-2 w-10 text-center">#</th>
+                <th class="p-2 w-16">종류</th>
+                <th class="p-2">표시 이름</th>
+                <th class="p-2 w-28 text-center">좌표 (X, Y)</th>
+                <th class="p-2 w-20 text-center">크기 (W×H)</th>
+              </tr>
+            </thead>
+            <tbody id="elementsTableBody" class="divide-y divide-slate-800/60">
+              <tr>
+                <td colspan="5" class="p-8 text-center text-slate-500">
+                  스캔된 UI 요소가 없습니다.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- 하단 탭 (LLM Tool Calling 추론 시뮬레이터) -->
+      <div class="h-1/2 flex flex-col min-h-0 bg-slate-950/40">
+        <div class="p-3 bg-slate-900 border-b border-slate-800 shrink-0 flex items-center justify-between">
+          <h2 class="text-xs font-bold text-slate-200 flex items-center gap-2">
+            <span>🤖</span>
+            <span>Ollama Tool Calling 시뮬레이터</span>
+          </h2>
+          <span class="text-[11px] text-slate-400">1-Step 에이전트 추론 검증</span>
+        </div>
+
+        <div class="p-3 flex-1 overflow-auto custom-scroll space-y-3">
+          
+          <!-- 모델 및 스킬셋 설정 행 -->
+          <div class="grid grid-cols-2 gap-2">
+            <div>
+              <div class="flex items-center justify-between mb-1">
+                <label class="text-[11px] font-semibold text-slate-400">Ollama 모델</label>
+                <button id="btnRefreshModels" title="모델 목록 새로고침" class="text-[10px] text-indigo-400 hover:text-indigo-300 hover:underline">
+                  🔄 새로고침
+                </button>
+              </div>
+              <select id="modelSelect" class="w-full bg-slate-800 text-slate-200 text-xs rounded border border-slate-700 px-2 py-1.5 focus:outline-none focus:border-indigo-500">
+                <option value="">모델 불러오는 중...</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-[11px] font-semibold text-slate-400 mb-1">스킬셋 프리셋</label>
+              <select id="presetSelect" class="w-full bg-slate-800 text-slate-200 text-xs rounded border border-slate-700 px-2 py-1.5 focus:outline-none focus:border-indigo-500">
+                <option value="basic_interaction">기본 화면 상호작용 (마우스/키보드/창/스캔)</option>
+                <option value="all">전체 스킬 (모든 도구)</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- 사용자 지시 프롬프트 -->
+          <div>
+            <div class="flex items-center justify-between mb-1">
+              <label class="text-[11px] font-semibold text-slate-400">사용자 명령 (Prompt)</label>
+              <span class="text-[10px] text-indigo-400 cursor-pointer hover:underline" id="btnFillSamplePrompt">
+                예시: '네이버 증권 클릭' 입력
+              </span>
+            </div>
+            <div class="flex gap-2">
+              <input type="text" id="inputPrompt" value="네이버 증권 메뉴를 클릭해줘" class="flex-1 bg-slate-800 text-slate-200 text-xs rounded border border-slate-700 px-3 py-2 focus:outline-none focus:border-indigo-500">
+              <button id="btnSimulate" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded shadow-md shadow-emerald-600/30 flex items-center gap-1.5 shrink-0 transition">
+                <span>🚀</span>
+                <span>추론 테스트</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- 추론 결과 및 진단 보고서 카드 -->
+          <div id="resultCard" class="hidden space-y-2 pt-1">
+            
+            <!-- 진단 상태 배너 -->
+            <div id="diagnosisBanner" class="p-2.5 rounded-lg border text-xs flex flex-col gap-1">
+              <div class="flex items-center justify-between font-bold" id="diagnosisTitle">
+                <!-- 진단 타이틀 동적 생성 -->
+              </div>
+              <div class="text-[11px]" id="diagnosisSummary">
+                <!-- 진단 요약 내용 동적 생성 -->
+              </div>
+              <ul class="text-[11px] space-y-0.5 mt-1 list-disc list-inside text-slate-300" id="diagnosisHints">
+                <!-- 힌트 항목 동적 생성 -->
+              </ul>
+            </div>
+
+            <!-- 모델의 생각 (Thought) -->
+            <div class="p-2.5 bg-slate-900 rounded border border-slate-800">
+              <div class="text-[11px] font-bold text-amber-400 mb-1 flex items-center gap-1">
+                <span>💡</span>
+                <span>모델의 생각 (Thought / Reasoning)</span>
+              </div>
+              <p id="txtThought" class="text-xs text-slate-300 whitespace-pre-wrap font-mono leading-relaxed bg-slate-950 p-2 rounded border border-slate-800/80">
+                -
+              </p>
+            </div>
+
+            <!-- 호출된 도구 (Tool Call) -->
+            <div class="p-2.5 bg-slate-900 rounded border border-slate-800">
+              <div class="text-[11px] font-bold text-indigo-400 mb-1 flex items-center justify-between">
+                <span class="flex items-center gap-1">
+                  <span>🛠️</span>
+                  <span>호출한 도구 (Tool Call)</span>
+                </span>
+                <span id="lblToolCallDuration" class="text-[10px] text-slate-400 font-normal">-</span>
+              </div>
+              <div id="toolCallBox" class="text-xs font-mono bg-slate-950 p-2 rounded border border-slate-800/80 text-emerald-400 overflow-x-auto">
+                (호출된 도구 없음)
+              </div>
+            </div>
+
+          </div>
+
+        </div>
+      </div>
+
+    </section>
+  </main>
+
+  <!-- 툴팁 -->
+  <div id="hoverTooltip" class="fixed hidden z-50 bg-slate-900 text-slate-100 text-xs px-2.5 py-1.5 rounded shadow-xl border border-slate-700 pointer-events-none transition-opacity">
+  </div>
+
+  <script>
+    // 전역 상태
+    let currentWindows = [];
+    let currentScanData = null;
+    let currentFilteredElements = [];
+    let selectedElementId = null;
+    let currentOffset = 0;
+    const currentLimit = 50;
+
+    const windowSelect = document.getElementById("windowSelect");
+    const btnRefreshWindows = document.getElementById("btnRefreshWindows");
+    const btnScan = document.getElementById("btnScan");
+    const chkBringToFront = document.getElementById("chkBringToFront");
+    
+    const screenshotImg = document.getElementById("screenshotImg");
+    const overlayLayer = document.getElementById("overlayLayer");
+    const emptyPlaceholder = document.getElementById("emptyPlaceholder");
+    const hoverTooltip = document.getElementById("hoverTooltip");
+
+    const lblTargetTitle = document.getElementById("lblTargetTitle");
+    const lblTotalCount = document.getElementById("lblTotalCount");
+    const lblScanDuration = document.getElementById("lblScanDuration");
+    const badgeFilteredCount = document.getElementById("badgeFilteredCount");
+    const btnPrevPage = document.getElementById("btnPrevPage");
+    const btnNextPage = document.getElementById("btnNextPage");
+    const lblPageInfo = document.getElementById("lblPageInfo");
+
+    const searchElements = document.getElementById("searchElements");
+    const elementsTableBody = document.getElementById("elementsTableBody");
+
+    const modelSelect = document.getElementById("modelSelect");
+    const btnRefreshModels = document.getElementById("btnRefreshModels");
+    const presetSelect = document.getElementById("presetSelect");
+    const inputPrompt = document.getElementById("inputPrompt");
+    const btnSimulate = document.getElementById("btnSimulate");
+    const btnFillSamplePrompt = document.getElementById("btnFillSamplePrompt");
+
+    const resultCard = document.getElementById("resultCard");
+    const diagnosisBanner = document.getElementById("diagnosisBanner");
+    const diagnosisTitle = document.getElementById("diagnosisTitle");
+    const diagnosisSummary = document.getElementById("diagnosisSummary");
+    const diagnosisHints = document.getElementById("diagnosisHints");
+    const txtThought = document.getElementById("txtThought");
+    const toolCallBox = document.getElementById("toolCallBox");
+    const lblToolCallDuration = document.getElementById("lblToolCallDuration");
+
+    // 1. 초기 로드
+    async function init() {
+      await Promise.all([loadWindows(), loadModels()]);
+    }
+
+    // 윈도우 목록 불러오기
+    async function loadWindows() {
+      try {
+        const res = await fetch("/api/debug/windows");
+        const data = await res.json();
+        if (data.success && data.windows) {
+          currentWindows = data.windows;
+          windowSelect.innerHTML = "";
+          
+          data.windows.forEach(win => {
+            const opt = document.createElement("option");
+            opt.value = win.hwnd;
+            opt.textContent = `${win.is_active ? '⭐ [활성] ' : ''}${win.title} (${win.class_name})`;
+            windowSelect.appendChild(opt);
+          });
+        }
+      } catch (err) {
+        console.error("윈도우 목록 로드 실패:", err);
+      }
+    }
+
+    // 모델 목록 불러오기
+    async function loadModels() {
+      modelSelect.innerHTML = `<option value="">모델 불러오는 중...</option>`;
+      if (btnRefreshModels) btnRefreshModels.textContent = "⏳ 조회 중...";
+
+      try {
+        const res = await fetch("/api/debug/models");
+        const data = await res.json();
+        if (data.success && data.models && data.models.length > 0) {
+          modelSelect.innerHTML = "";
+          data.models.forEach((m, idx) => {
+            const opt = document.createElement("option");
+            opt.value = m;
+            opt.textContent = m;
+            if (idx === 0) opt.selected = true;
+            modelSelect.appendChild(opt);
+          });
+        } else {
+          const errDetail = data.error || (data.models && data.models.length === 0 ? "설치된 모델 없음" : "응답 없음");
+          modelSelect.innerHTML = `<option value="">⚠️ ${errDetail}</option>`;
+        }
+      } catch (err) {
+        console.error("모델 로드 실패:", err);
+        modelSelect.innerHTML = `<option value="">⚠️ 네트워크 오류 (${err.message})</option>`;
+      } finally {
+        if (btnRefreshModels) btnRefreshModels.textContent = "🔄 새로고침";
+      }
+    }
+
+    // 2. 스캔 실행 (페이지네이션 오프셋 지원)
+    async function doScan(targetOffset = null) {
+      if (targetOffset !== null) {
+        currentOffset = targetOffset;
+      }
+      const hwnd = parseInt(windowSelect.value);
+      if (!hwnd) {
+        alert("스캔할 윈도우를 선택하세요.");
+        return;
+      }
+
+      btnScan.disabled = true;
+      btnScan.innerHTML = "<span>⏳</span><span>스캔 중...</span>";
+
+      try {
+        const res = await fetch("/api/debug/scan", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            hwnd: hwnd,
+            offset: currentOffset,
+            limit: currentLimit,
+            bring_to_front: chkBringToFront.checked
+          })
+        });
+
+        const data = await res.json();
+        if (!data.success) {
+          alert("스캔 실패: " + (data.error || "알 수 없는 오류"));
+          return;
+        }
+
+        currentScanData = data;
+        renderScanResult(data);
+      } catch (err) {
+        alert("스캔 요청 오류: " + err.message);
+      } finally {
+        btnScan.disabled = false;
+        btnScan.innerHTML = "<span>🔍</span><span>화면 UI 요소 스캔</span>";
+      }
+    }
+
+    // 3. 스캔 결과 렌더링
+    function renderScanResult(data) {
+      lblTargetTitle.textContent = data.window_title || "제목 없음";
+      lblTotalCount.textContent = data.total_count || 0;
+      lblScanDuration.textContent = `${data.scan_duration_ms} ms`;
+
+      // 페이지네이션 상태 갱신
+      currentOffset = data.offset || 0;
+      const curPage = data.current_page || 1;
+      const totPages = data.total_pages || 1;
+      const count = data.element_count || 0;
+      const total = data.total_count || 0;
+
+      lblPageInfo.textContent = `${curPage} / ${totPages} 페이지 (OFFSET: ${currentOffset}, 표시: ${count}개)`;
+      btnPrevPage.disabled = currentOffset <= 0;
+      btnNextPage.disabled = !data.has_more;
+
+      // 스크린샷 표시
+      if (data.screenshot_base64) {
+        screenshotImg.src = data.screenshot_base64;
+        screenshotImg.classList.remove("hidden");
+        emptyPlaceholder.classList.add("hidden");
+      }
+
+      screenshotImg.onload = () => {
+        renderOverlayBoxes(data);
+      };
+      if (screenshotImg.complete) {
+        renderOverlayBoxes(data);
+      }
+
+      // 테이블 렌더링
+      filterAndRenderTable();
+    }
+
+    // 오버레이 사각형 렌더링
+    function renderOverlayBoxes(data) {
+      overlayLayer.innerHTML = "";
+      if (!data.elements || !data.screenshot_base64) return;
+
+      const wRect = data.window_rect || {};
+      const imgNaturalW = screenshotImg.naturalWidth;
+      const imgNaturalH = screenshotImg.naturalHeight;
+      const displayW = screenshotImg.clientWidth;
+      const displayH = screenshotImg.clientHeight;
+
+      if (!imgNaturalW || !imgNaturalH) return;
+
+      const scaleX = displayW / imgNaturalW;
+      const scaleY = displayH / imgNaturalH;
+
+      const winLeft = wRect.left || 0;
+      const winTop = wRect.top || 0;
+
+      data.elements.forEach(el => {
+        const box = document.createElement("div");
+        box.className = `bbox ${selectedElementId === el.id ? 'active' : ''}`;
+        box.dataset.id = el.id;
+
+        // 대상 창 내부 상대 좌표 계산
+        const relX = (el.left - winLeft);
+        const relY = (el.top - winTop);
+
+        const leftPx = relX * scaleX;
+        const topPx = relY * scaleY;
+        const widthPx = el.width * scaleX;
+        const heightPx = el.height * scaleY;
+
+        box.style.left = `${leftPx}px`;
+        box.style.top = `${topPx}px`;
+        box.style.width = `${widthPx}px`;
+        box.style.height = `${heightPx}px`;
+
+        if (el.is_primary) {
+          box.style.border = "1.5px solid #10b981"; // 초록색 (주요 인터랙티브)
+          box.style.backgroundColor = "rgba(16, 185, 129, 0.15)";
+        } else {
+          box.style.border = "1px solid #f59e0b"; // 주황/노랑
+          box.style.backgroundColor = "rgba(245, 158, 11, 0.12)";
+        }
+
+        // 툴팁 이벤트
+        box.addEventListener("mouseenter", (e) => {
+          hoverTooltip.innerHTML = `
+            <div class="font-bold text-indigo-300">#${el.id} [${el.type_name}] ${el.name}</div>
+            <div class="text-[10px] text-slate-400">물리 좌표: (${el.x}, ${el.y}) · 크기: ${el.width}×${el.height}</div>
+          `;
+          hoverTooltip.classList.remove("hidden");
+          moveTooltip(e);
+        });
+        box.addEventListener("mousemove", moveTooltip);
+        box.addEventListener("mouseleave", () => {
+          hoverTooltip.classList.add("hidden");
+        });
+
+        // 클릭 이벤트 (선택 및 프롬프트 주입)
+        box.addEventListener("click", () => {
+          selectElement(el.id);
+          inputPrompt.value = `"${el.name}" ${el.type_name}을(를) 클릭해줘`;
+        });
+
+        overlayLayer.appendChild(box);
+      });
+    }
+
+    function moveTooltip(e) {
+      hoverTooltip.style.left = `${e.clientX + 12}px`;
+      hoverTooltip.style.top = `${e.clientY + 12}px`;
+    }
+
+    // 요소 선택
+    function selectElement(id) {
+      selectedElementId = id;
+      document.querySelectorAll(".bbox").forEach(b => {
+        b.classList.toggle("active", parseInt(b.dataset.id) === id);
+      });
+      document.querySelectorAll("#elementsTableBody tr").forEach(row => {
+        row.classList.toggle("bg-indigo-950/40", parseInt(row.dataset.id) === id);
+      });
+    }
+
+    // 4. 테이블 필터 및 렌더링
+    function filterAndRenderTable() {
+      if (!currentScanData || !currentScanData.elements) {
+        elementsTableBody.innerHTML = `<tr><td colspan="5" class="p-8 text-center text-slate-500">스캔된 UI 요소가 없습니다.</td></tr>`;
+        badgeFilteredCount.textContent = "0개";
+        return;
+      }
+
+      const query = searchElements.value.trim().toLowerCase();
+      const filtered = currentScanData.elements.filter(el => {
+        if (!query) return true;
+        return el.name.toLowerCase().includes(query) || 
+               el.type_name.toLowerCase().includes(query) ||
+               String(el.id) === query;
+      });
+
+      badgeFilteredCount.textContent = `${filtered.length}개`;
+
+      if (filtered.length === 0) {
+        elementsTableBody.innerHTML = `<tr><td colspan="5" class="p-8 text-center text-slate-500">검색어와 일치하는 요소가 없습니다.</td></tr>`;
+        return;
+      }
+
+      elementsTableBody.innerHTML = "";
+      filtered.forEach(el => {
+        const tr = document.createElement("tr");
+        tr.dataset.id = el.id;
+        tr.className = `hover:bg-slate-800/60 cursor-pointer transition ${selectedElementId === el.id ? 'bg-indigo-950/40' : ''}`;
+
+        const typeBadge = el.is_primary ? 
+          `<span class="px-1.5 py-0.5 rounded text-[10px] bg-emerald-950 text-emerald-400 border border-emerald-800/60">${el.type_name}</span>` :
+          `<span class="px-1.5 py-0.5 rounded text-[10px] bg-slate-800 text-slate-400">${el.type_name}</span>`;
+
+        tr.innerHTML = `
+          <td class="p-2 text-center font-bold text-slate-400">#${el.id}</td>
+          <td class="p-2">${typeBadge}</td>
+          <td class="p-2 font-medium text-slate-200 truncate max-w-[140px]" title="${el.name}">${el.name}</td>
+          <td class="p-2 text-center font-mono text-indigo-300">(${el.x}, ${el.y})</td>
+          <td class="p-2 text-center font-mono text-slate-400">${el.width}×${el.height}</td>
+        `;
+
+        tr.addEventListener("click", () => {
+          selectElement(el.id);
+          inputPrompt.value = `"${el.name}" ${el.type_name}을(를) 클릭해줘`;
+        });
+
+        elementsTableBody.appendChild(tr);
+      });
+    }
+
+    // 5. LLM Tool Calling 시뮬레이션
+    async function doSimulate() {
+      const model = modelSelect.value;
+      const prompt = inputPrompt.value.trim();
+
+      if (!model) {
+        alert("Ollama 모델을 선택하세요.");
+        return;
+      }
+      if (!prompt) {
+        alert("사용자 명령을 입력하세요.");
+        return;
+      }
+
+      btnSimulate.disabled = true;
+      btnSimulate.innerHTML = "<span>⏳</span><span>추론 중...</span>";
+
+      try {
+        const res = await fetch("/api/debug/simulate-tool-call", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: model,
+            prompt: prompt,
+            preset: presetSelect.value,
+            elements_text: currentScanData ? currentScanData.formatted_text : null,
+            window_title: currentScanData ? currentScanData.window_title : null
+          })
+        });
+
+        const data = await res.json();
+        renderSimulationResult(data);
+      } catch (err) {
+        alert("시뮬레이션 요청 오류: " + err.message);
+      } finally {
+        btnSimulate.disabled = false;
+        btnSimulate.innerHTML = "<span>🚀</span><span>추론 테스트</span>";
+      }
+    }
+
+    // 시뮬레이션 결과 렌더링
+    function renderSimulationResult(data) {
+      resultCard.classList.remove("hidden");
+
+      if (!data.success) {
+        diagnosisBanner.className = "p-2.5 rounded-lg border text-xs flex flex-col gap-1 bg-red-950/60 border-red-800 text-red-300";
+        diagnosisTitle.innerHTML = `<span>🚨 오류 발생</span>`;
+        diagnosisSummary.textContent = data.error || "추론 실패";
+        diagnosisHints.innerHTML = "";
+        txtThought.textContent = "-";
+        toolCallBox.textContent = "(도구 호출 불가)";
+        return;
+      }
+
+      const diag = data.diagnosis || {};
+      if (diag.status === "SUCCESS") {
+        diagnosisBanner.className = "p-2.5 rounded-lg border text-xs flex flex-col gap-1 bg-emerald-950/60 border-emerald-800 text-emerald-300";
+        diagnosisTitle.innerHTML = `<span>✅ 1-Step Tool Calling 추론 성공</span><span class="text-[10px] font-normal text-emerald-400">${data.duration_ms} ms</span>`;
+      } else if (diag.status === "WARNING") {
+        diagnosisBanner.className = "p-2.5 rounded-lg border text-xs flex flex-col gap-1 bg-amber-950/60 border-amber-800 text-amber-300";
+        diagnosisTitle.innerHTML = `<span>⚠️ 도구 미호출 (경고)</span><span class="text-[10px] font-normal text-amber-400">${data.duration_ms} ms</span>`;
+      } else {
+        diagnosisBanner.className = "p-2.5 rounded-lg border text-xs flex flex-col gap-1 bg-slate-800 border-slate-700 text-slate-300";
+        diagnosisTitle.innerHTML = `<span>ℹ️ 일반 응답</span>`;
+      }
+
+      diagnosisSummary.textContent = diag.summary || "";
+      diagnosisHints.innerHTML = "";
+      if (diag.hints && diag.hints.length > 0) {
+        diag.hints.forEach(h => {
+          const li = document.createElement("li");
+          li.textContent = h;
+          diagnosisHints.appendChild(li);
+        });
+      }
+
+      // 생각 (Thought)
+      txtThought.textContent = data.thought || "(생각 과정 없음)";
+
+      // 도구 호출 (Tool Call)
+      lblToolCallDuration.textContent = `소요 시간: ${data.duration_ms} ms · 제공된 도구: ${data.tools_count}개`;
+      if (data.tool_calls && data.tool_calls.length > 0) {
+        toolCallBox.innerHTML = "";
+        data.tool_calls.forEach(tc => {
+          const pre = document.createElement("pre");
+          pre.className = "text-emerald-400 font-mono text-xs whitespace-pre-wrap";
+          pre.textContent = JSON.stringify(tc, null, 2);
+          toolCallBox.appendChild(pre);
+        });
+      } else {
+        toolCallBox.textContent = "(도구 호출 없음 - 일반 텍스트 답변 모드)";
+      }
+    }
+
+    // 이벤트 리스너 바인딩
+    btnRefreshWindows.addEventListener("click", loadWindows);
+    if (btnRefreshModels) btnRefreshModels.addEventListener("click", loadModels);
+    btnScan.addEventListener("click", () => doScan(0));
+    btnPrevPage.addEventListener("click", () => doScan(Math.max(0, currentOffset - currentLimit)));
+    btnNextPage.addEventListener("click", () => doScan(currentOffset + currentLimit));
+    searchElements.addEventListener("input", filterAndRenderTable);
+    searchElements.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        currentOffset = 0;
+        doScan(0);
+      }
+    });
+    btnSimulate.addEventListener("click", doSimulate);
+    btnFillSamplePrompt.addEventListener("click", () => {
+      inputPrompt.value = "네이버 증권 메뉴를 클릭해줘";
+    });
+
+    window.addEventListener("resize", () => {
+      if (currentScanData) renderOverlayBoxes(currentScanData);
+    });
+
+    // 시작
+    init();
+  </script>
+</body>
+</html>

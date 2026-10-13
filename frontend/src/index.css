@@ -1,0 +1,85 @@
+@import '@xyflow/react/dist/style.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  background-color: transparent !important;
+}
+
+/* Custom scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #0f172a;
+}
+::-webkit-scrollbar-thumb {
+  background: #334155;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #475569;
+}
+
+/* React Flow custom dark styling */
+.react-flow__attribution {
+  display: none !important;
+}
+
+.react-flow__handle {
+  width: 10px;
+  height: 10px;
+  background-color: #60a5fa;
+  border: 2px solid #0f172a;
+}
+
+.react-flow__handle:hover {
+  background-color: #93c5fd;
+}
+
+/* React Flow Controls custom styling - 심볼 가시성 및 고대비 스타일 */
+.flow-builder-controls,
+.react-flow__controls {
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.25), 0 2px 4px -2px rgba(0, 0, 0, 0.15) !important;
+  border-radius: 6px !important;
+  overflow: hidden !important;
+  border: 1px solid #cbd5e1 !important;
+  background-color: #ffffff !important;
+}
+
+.react-flow__controls-button {
+  background-color: #ffffff !important;
+  border-bottom: 1px solid #e2e8f0 !important;
+  color: #0f172a !important;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.react-flow__controls-button:last-child {
+  border-bottom: none !important;
+}
+
+.react-flow__controls-button svg {
+  fill: #0f172a !important;
+  max-width: 13px !important;
+  max-height: 13px !important;
+  transition: fill 0.15s ease, transform 0.15s ease;
+}
+
+.react-flow__controls-button:hover {
+  background-color: #f1f5f9 !important;
+}
+
+.react-flow__controls-button:hover svg {
+  fill: #2563eb !important;
+}
+
+.react-flow__controls-button:active {
+  background-color: #e2e8f0 !important;
+}
+
