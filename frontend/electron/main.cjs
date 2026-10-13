@@ -289,6 +289,7 @@ async function startBackend() {
       },
       stdio: 'ignore',
       detached: false,
+      windowsHide: true,
     });
     // 백엔드가 포트 8000에서 응답할 때까지 안전하게 대기
     await waitForBackend(15000, 400);
@@ -342,13 +343,27 @@ app.whenReady().then(() => {
   });
 });
 
-app.on('window-all-closed', () => {
-  if (backendProcess) {
+function killBackend() {
+  if (backendProcess && backendProcess.pid) {
     try {
-      backendProcess.kill();
+      if (process.platform === 'win32') {
+        const { execSync } = require('child_process');
+        execSync(`taskkill /pid ${backendProcess.pid} /T /F`, { stdio: 'ignore' });
+      } else {
+        backendProcess.kill('SIGTERM');
+      }
     } catch {}
+    backendProcess = null;
   }
+}
+
+app.on('window-all-closed', () => {
+  killBackend();
   if (process.platform !== 'darwin') {
     app.quit();
   }
+});
+
+app.on('will-quit', () => {
+  killBackend();
 });
