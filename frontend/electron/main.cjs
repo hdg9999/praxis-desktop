@@ -327,7 +327,22 @@ async function createWindow() {
     console.log('[Electron] 빌드된 dist 패키지로 실행합니다:', distPath);
     mainWindow.loadFile(distPath);
   } else {
-    mainWindow.loadURL('http://localhost:5173');
+    console.warn('[Electron] dist 빌드 산출물 또는 Vite 개발 서버를 찾을 수 없습니다.');
+    const errorHtml = `
+      <!DOCTYPE html>
+      <html>
+      <head><meta charset="utf-8"><title>Praxis Desktop - 초기화 필요</title></head>
+      <body style="background:#020617;color:#f8fafc;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;">
+        <div style="text-align:center;max-width:520px;padding:36px;background:#0f172a;border-radius:16px;border:1px solid #1e293b;box-shadow:0 10px 25px rgba(0,0,0,0.5);">
+          <div style="font-size:36px;margin-bottom:12px;">⚙️</div>
+          <h2 style="color:#60a5fa;margin:0 0 12px 0;">Praxis Desktop 초기화 필요</h2>
+          <p style="color:#94a3b8;font-size:14px;line-height:1.6;margin:0 0 20px 0;">프론트엔드 빌드 파일(dist)이 감지되지 않았습니다.<br>루트 디렉터리의 <b>run_electron.bat</b>을 실행하시면 필요한 패키지 설치 및 빌드가 자동으로 완료됩니다.</p>
+          <div style="background:#1e293b;padding:12px;border-radius:8px;color:#cbd5e1;font-family:monospace;font-size:12px;">cd frontend && npm install && npm run build</div>
+        </div>
+      </body>
+      </html>
+    `;
+    mainWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(errorHtml)}`);
   }
 
   mainWindow.on('closed', () => {

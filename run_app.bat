@@ -14,10 +14,17 @@ set "ROOT_DIR=%~dp0"
 cd /d "%ROOT_DIR%"
 
 if not exist "backend\.venv\Scripts\python.exe" (
-    echo [오류] Python 가상환경이 존재하지 않습니다: backend\.venv
-    echo backend 디렉터리에서 가상환경 및 패키지 설치를 먼저 확인해 주세요.
-    pause
-    exit /b 1
+    echo [초기 구성] Python 가상환경 생성 및 패키지 설치 중...
+    python -m venv "backend\.venv"
+    "backend\.venv\Scripts\python.exe" -m pip install -q --upgrade pip
+    "backend\.venv\Scripts\python.exe" -m pip install -q -r "backend\requirements.txt"
+)
+
+if not exist "frontend\node_modules" (
+    echo [초기 구성] 프론트엔드 의존성 모듈 설치 중...
+    cd /d "%ROOT_DIR%frontend"
+    call npm.cmd install
+    cd /d "%ROOT_DIR%"
 )
 
 echo [1/3] Python 백엔드 서버 시작 중 (포트 8000)...
