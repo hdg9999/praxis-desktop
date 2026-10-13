@@ -41,8 +41,16 @@ Praxis Desktop은 모든 것을 블랙박스 AI에 전적으로 위임하는 것
 
 ## 🚀 빠른 시작 (Quick Start)
 
-### 1. 원클릭 실행 (Windows)
-프로젝트 루트에서 `run_app.bat`을 실행합니다:
+### 1. 데스크톱 앱 원클릭 실행 (권장)
+프로젝트 루트에서 `run_electron.bat`을 실행합니다:
+```bash
+.\run_electron.bat
+```
+* 불필요한 콘솔 창 없이 **Praxis Desktop 메인 윈도우**만 단독 실행됩니다.
+* 백엔드(Python FastAPI)는 백그라운드에서 자동 관리되며, 메인 창을 닫으면 백엔드까지 함께 안전하게 자동 종료됩니다.
+
+### 2. 웹 브라우저 대시보드 모드 실행
+브라우저(`localhost:5173`) 환경에서 이용하고자 할 경우 `run_app.bat`을 실행합니다:
 ```bash
 .\run_app.bat
 ```
