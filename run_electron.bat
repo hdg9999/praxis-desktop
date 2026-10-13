@@ -1,7 +1,7 @@
 @echo off
 chcp 65001 > nul
-set PYTHONUTF8=1
-set PYTHONIOENCODING=utf-8
+set "PYTHONUTF8=1"
+set "PYTHONIOENCODING=utf-8"
 
 title Praxis Desktop (Electron) Launcher
 
@@ -21,7 +21,7 @@ if not exist "backend\.venv\Scripts\python.exe" (
 )
 
 echo [1/2] Python 백엔드 서버 시작 중 (포트 8000)...
-start "Praxis Backend" /D "%ROOT_DIR%backend" cmd /k "chcp 65001 > nul && set PYTHONUTF8=1 && .venv\Scripts\python.exe run.py"
+start "Praxis Backend" /D "%ROOT_DIR%backend" cmd /k ".venv\Scripts\python.exe run.py"
 
 echo 백엔드 준비 상태 대기 중 (http://127.0.0.1:8000/health)...
 powershell -NoProfile -ExecutionPolicy Bypass -Command "$w=0; while($w -lt 30){ try { $r = Invoke-WebRequest -Uri 'http://127.0.0.1:8000/health' -UseBasicParsing -TimeoutSec 1; if ($r.StatusCode -eq 200) { Write-Host ' >> 백엔드 준비 완료!'; exit 0 } } catch {}; Start-Sleep -Milliseconds 500; $w++ }; Write-Host ' >> 대기 시간 초과, 계속 진행합니다.'"
