@@ -228,7 +228,7 @@ ipcMain.on('picker:element-selected', (_event, data) => {
   }
 });
 
-function checkUrl(url, timeoutMs = 1000) {
+function checkUrl(url, timeoutMs = 500) {
   return new Promise((resolve) => {
     try {
       const req = http.get(url, (res) => {
@@ -245,41 +245,37 @@ function checkUrl(url, timeoutMs = 1000) {
   });
 }
 
-async function waitForBackend(maxWaitMs = 15000, intervalMs = 400) {
+async function waitForBackend(maxWaitMs = 10000, intervalMs = 250) {
   const startTime = Date.now();
   console.log('[Electron] 백엔드 준비 완료 대기 중 (http://127.0.0.1:8000/health)...');
   while (Date.now() - startTime < maxWaitMs) {
-    const isUp = await checkUrl('http://127.0.0.1:8000/health', 500);
+    const isUp = await checkUrl('http://127.0.0.1:8000/health', 300);
     if (isUp) {
       console.log(`[Electron] 백엔드 준비 완료 확인 (${Date.now() - startTime}ms 소요)`);
       return true;
     }
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }
-  console.warn('[Electron] 백엔드 준비 대기 시간 초과(15초), 계속 진행합니다.');
+  console.warn(`[Electron] 백엔드 준비 대기 시간 초과(${maxWaitMs / 1000}초), 계속 진행합니다.`);
   return false;
 }
 
 async function startBackend() {
-  const isRunning = await checkUrl('http://127.0.0.1:8000/health', 500);
+  const isRunning = await checkUrl('http://127.0.0.1:8000/health', 250);
   if (isRunning) {
     console.log('[Electron] 백엔드가 이미 정상 실행 중입니다.');
     return;
   }
 
-  // 외부 런처(배치 파일 등)에서 백엔드를 막 시작한 상태인지 먼저 2.5초간 대기 확인
-  console.log('[Electron] 기존 또는 외부 백엔드 기동 여부 확인 중...');
-  const launchedExternally = await waitForBackend(2500, 300);
-  if (launchedExternally) {
-    console.log('[Electron] 외부에서 구동된 백엔드 연결 확인 완료.');
-    return;
-  }
-
   const backendDir = path.resolve(__dirname, '../../backend');
-  const pythonExe = path.join(backendDir, '.venv/Scripts/python.exe');
+  const pythonCandidates = [
+    path.join(backendDir, '.venv/Scripts/python.exe'),
+    path.join(backendDir, 'venv/Scripts/python.exe'),
+  ];
+  const pythonExe = pythonCandidates.find((p) => fs.existsSync(p));
 
-  if (fs.existsSync(pythonExe)) {
-    console.log('[Electron] 백엔드 프로세스를 직접 시작합니다...');
+  if (pythonExe) {
+    console.log('[Electron] 백엔드 프로세스를 직접 시작합니다:', pythonExe);
     backendProcess = spawn(pythonExe, ['run.py'], {
       cwd: backendDir,
       env: {
@@ -291,16 +287,13 @@ async function startBackend() {
       detached: false,
       windowsHide: true,
     });
-    // 백엔드가 포트 8000에서 응답할 때까지 안전하게 대기
-    await waitForBackend(15000, 400);
+    await waitForBackend(10000, 250);
   } else {
-    console.warn('[Electron] Python 가상환경을 찾을 수 없습니다:', pythonExe);
+    console.warn('[Electron] Python 가상환경을 찾을 수 없습니다 (.venv 또는 venv).');
   }
 }
 
 async function createWindow() {
-  await startBackend();
-
   mainWindow = new BrowserWindow({
     width: 1440,
     height: 900,
@@ -317,15 +310,18 @@ async function createWindow() {
     autoHideMenuBar: true,
   });
 
-  const isViteUp = await checkUrl('http://localhost:5173');
+  // 백엔드 백그라운드 시작 (창 렌더링과 병렬 진행)
+  const backendPromise = startBackend();
+
+  const isViteUp = await checkUrl('http://localhost:5173', 400);
   const distPath = path.join(__dirname, '../dist/index.html');
 
   if (isViteUp) {
     console.log('[Electron] Vite 개발 서버(http://localhost:5173)로 연결합니다.');
-    mainWindow.loadURL('http://localhost:5173');
+    await mainWindow.loadURL('http://localhost:5173');
   } else if (fs.existsSync(distPath)) {
     console.log('[Electron] 빌드된 dist 패키지로 실행합니다:', distPath);
-    mainWindow.loadFile(distPath);
+    await mainWindow.loadFile(distPath);
   } else {
     console.warn('[Electron] dist 빌드 산출물 또는 Vite 개발 서버를 찾을 수 없습니다.');
     const errorHtml = `
@@ -342,8 +338,10 @@ async function createWindow() {
       </body>
       </html>
     `;
-    mainWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(errorHtml)}`);
+    await mainWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(errorHtml)}`);
   }
+
+  await backendPromise;
 
   mainWindow.on('closed', () => {
     mainWindow = null;

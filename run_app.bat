@@ -1,53 +1,69 @@
 @echo off
-chcp 65001 > nul
 set "PYTHONUTF8=1"
 set "PYTHONIOENCODING=utf-8"
 
-title Praxis Desktop Launcher
-
-echo ========================================================
-echo   Praxis Desktop - Agentic RPA Studio 실행 중...
-echo ========================================================
-echo.
+title Praxis Desktop Launcher (Web Browser Mode)
 
 set "ROOT_DIR=%~dp0"
 cd /d "%ROOT_DIR%"
 
-if not exist "backend\.venv\Scripts\python.exe" (
-    echo [초기 구성] Python 가상환경 생성 및 패키지 설치 중...
-    python -m venv "backend\.venv"
-    "backend\.venv\Scripts\python.exe" -m pip install -q --upgrade pip
-    "backend\.venv\Scripts\python.exe" -m pip install -q -r "backend\requirements.txt"
-)
+if exist "%ROOT_DIR%backend\.venv\Scripts\python.exe" goto CHECK_FE
+if exist "%ROOT_DIR%backend\venv\Scripts\python.exe" goto CHECK_FE
+goto SETUP_BE
 
-if not exist "frontend\node_modules" (
-    echo [초기 구성] 프론트엔드 의존성 모듈 설치 중...
-    cd /d "%ROOT_DIR%frontend"
-    call npm.cmd install
-    cd /d "%ROOT_DIR%"
-)
+:CHECK_FE
+if exist "%ROOT_DIR%frontend\node_modules" goto LAUNCH_APP
+goto SETUP_FE
 
-echo [1/3] Python 백엔드 서버 시작 중 (포트 8000)...
-start "Praxis Backend" /D "%ROOT_DIR%backend" cmd /k ".venv\Scripts\python.exe run.py"
+:SETUP_BE
+echo ========================================================
+echo   Praxis Desktop - Configuring Backend Environment...
+echo ========================================================
+python -m venv "%ROOT_DIR%backend\.venv"
+"%ROOT_DIR%backend\.venv\Scripts\python.exe" -m pip install -q --upgrade pip
+"%ROOT_DIR%backend\.venv\Scripts\python.exe" -m pip install -q -r "%ROOT_DIR%backend\requirements.txt"
+echo [OK] Backend environment ready.
+goto CHECK_FE
 
-echo [2/3] 백엔드 준비 상태 대기 중 (http://127.0.0.1:8000/health)...
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$w=0; while($w -lt 30){ try { $r = Invoke-WebRequest -Uri 'http://127.0.0.1:8000/health' -UseBasicParsing -TimeoutSec 1; if ($r.StatusCode -eq 200) { Write-Host ' >> 백엔드 준비 완료!'; exit 0 } } catch {}; Start-Sleep -Milliseconds 500; $w++ }; Write-Host ' >> 대기 시간 초과, 계속 진행합니다.'"
+:SETUP_FE
+echo ========================================================
+echo   Praxis Desktop - Installing Frontend Dependencies...
+echo ========================================================
+cd /d "%ROOT_DIR%frontend"
+call npm.cmd install
+cd /d "%ROOT_DIR%"
+echo [OK] Frontend packages installed.
+goto LAUNCH_APP
 
-echo [3/3] 프론트엔드 Vite 개발 서버 시작 중 (포트 5173)...
+:LAUNCH_APP
+set "PY_EXE=%ROOT_DIR%backend\.venv\Scripts\python.exe"
+if not exist "%PY_EXE%" set "PY_EXE=%ROOT_DIR%backend\venv\Scripts\python.exe"
+
+echo ========================================================
+echo   Praxis Desktop - Agentic RPA Studio (Web Mode)
+echo ========================================================
+echo.
+
+echo [1/3] Starting Python Backend Server (Port 8000)...
+start "Praxis Backend" /D "%ROOT_DIR%backend" cmd /k ""%PY_EXE%" run.py"
+
+echo [2/3] Waiting for Backend Server (http://127.0.0.1:8000/health)...
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$w=0; while($w -lt 30){ try { $r = Invoke-WebRequest -Uri 'http://127.0.0.1:8000/health' -UseBasicParsing -TimeoutSec 1; if ($r.StatusCode -eq 200) { Write-Host ' [OK] Backend is ready!'; exit 0 } } catch {}; Start-Sleep -Milliseconds 500; $w++ }; Write-Host ' [!] Timeout, continuing...'"
+
+echo [3/3] Starting Frontend Vite Server (Port 5173)...
 start "Praxis Frontend" /D "%ROOT_DIR%frontend" cmd /k "npm.cmd run dev"
 
-timeout /t 3 /nobreak > nul
+ping 127.0.0.1 -n 3 > nul
 
-echo 웹 대시보드를 브라우저에서 엽니다...
+echo Opening Web Dashboard in default browser...
 start http://localhost:5173
 
 echo.
 echo ========================================================
-echo   Praxis Desktop 구동 완료!
-echo   - 웹 대시보드: http://localhost:5173
-echo   - 백엔드 API: http://localhost:8000/docs
-echo   - 비상 정지 핫키: F12
+echo   Praxis Desktop is running!
+echo   - Web UI: http://localhost:5173
+echo   - Backend Docs: http://localhost:8000/docs
+echo   - Emergency Stop Hotkey: F12
 echo ========================================================
 echo.
-echo 이 창을 닫아도 백엔드 및 프론트엔드는 백그라운드 콘솔에서 계속 실행됩니다.
 pause
