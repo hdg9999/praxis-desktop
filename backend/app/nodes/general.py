@@ -200,6 +200,170 @@ def find_image_on_screen(tpl_img: np.ndarray, confidence: float = 0.8) -> Option
         print(f"[find_image_on_screen] 매칭 에러: {e}")
     return None
 
+def show_topmost_message_box(
+    title: str,
+    message: str,
+    message_type: str = "info",
+    button_type: str = "ok"
+) -> int:
+    """
+    Windows 네이티브 MessageBoxW를 화면 최상단(MB_TOPMOST | MB_SETFOREGROUND)으로 출력하고
+    사용자가 클릭한 버튼의 반환 코드(IDOK=1, IDCANCEL=2, IDYES=6, IDNO=7)를 반환합니다.
+    'continue_stop' 모드에서는 스레드 로컬 WH_CBT 훅을 통해 버튼 텍스트를 ['계속', '중지']로 렌더링합니다.
+    """
+    import ctypes
+    user32 = ctypes.windll.user32
+    kernel32 = ctypes.windll.kernel32
+
+    MB_OK = 0x00000000
+    MB_OKCANCEL = 0x00000001
+    MB_YESNO = 0x00000004
+
+    MB_ICONERROR = 0x00000010
+    MB_ICONWARNING = 0x00000030
+    MB_ICONINFORMATION = 0x00000040
+
+    MB_SETFOREGROUND = 0x00010000
+    MB_TOPMOST = 0x00040000
+
+    icon_map = {
+        "info": MB_ICONINFORMATION,
+        "warning": MB_ICONWARNING,
+        "error": MB_ICONERROR,
+    }
+    icon_flag = icon_map.get(str(message_type).lower(), MB_ICONINFORMATION)
+
+    btn_key = str(button_type).lower()
+    if btn_key == "yes_no":
+        btn_flag = MB_YESNO
+    elif btn_key == "continue_stop":
+        btn_flag = MB_OKCANCEL
+    else:
+        btn_flag = MB_OK
+
+    flags = btn_flag | icon_flag | MB_TOPMOST | MB_SETFOREGROUND
+
+    if btn_key == "continue_stop":
+        WH_CBT = 5
+        HCBT_ACTIVATE = 5
+        IDOK = 1
+        IDCANCEL = 2
+
+        HOOKPROC = ctypes.WINFUNCTYPE(ctypes.c_ssize_t, ctypes.c_int, ctypes.wintypes.WPARAM, ctypes.wintypes.LPARAM)
+        h_hook = [None]
+
+        def _cbt_proc(nCode, wParam, lParam):
+            if nCode == HCBT_ACTIVATE:
+                try:
+                    hwnd_dlg = int(wParam)
+                    user32.SetDlgItemTextW(hwnd_dlg, IDOK, "계속")
+                    user32.SetDlgItemTextW(hwnd_dlg, IDCANCEL, "중지")
+                except Exception:
+                    pass
+                finally:
+                    if h_hook[0]:
+                        user32.UnhookWindowsHookEx(h_hook[0])
+                        h_hook[0] = None
+            return user32.CallNextHookEx(h_hook[0], nCode, wParam, lParam)
+
+        cb_func = HOOKPROC(_cbt_proc)
+        tid = kernel32.GetCurrentThreadId()
+        try:
+            h_hook[0] = user32.SetWindowsHookExW(WH_CBT, cb_func, None, tid)
+            return int(user32.MessageBoxW(0, str(message), str(title), flags))
+        finally:
+            if h_hook[0]:
+                user32.UnhookWindowsHookEx(h_hook[0])
+                h_hook[0] = None
+
+    return int(user32.MessageBoxW(0, str(message), str(title), flags))
+
+
+async def resolve_target_point_async(
+    mode: str,
+    x: Optional[Any],
+    y: Optional[Any],
+    object_data: Optional[Dict[str, Any]],
+    config: Dict[str, Any],
+    context: ExecutionContext,
+    point_label: str = "대상"
+) -> Tuple[int, int, str]:
+    """
+    좌표('coordinate') 또는 UI 오브젝트('object') 모드에 따라 화면상의 (x, y) 좌표와 설명 문자열을 반환합니다.
+    """
+    obj = object_data or {}
+    has_obj = bool(obj and (obj.get("name") or obj.get("orig_name") or obj.get("automation_id") or obj.get("image_url") or obj.get("base64_image") or obj.get("x") is not None))
+
+    if mode == "object" or (mode != "coordinate" and has_obj):
+        if not has_obj:
+            raise ValueError(f"{point_label} UI 오브젝트가 선택되지 않았습니다.")
+
+        obj_name = obj.get("name") or obj.get("orig_name") or point_label
+        search_mode = config.get("search_mode", "hybrid")
+        fallback_coords = bool(config.get("fallback_to_coords", True))
+        auto_focus_scroll = bool(config.get("auto_focus_scroll", True))
+        confidence = float(config.get("confidence", obj.get("confidence", 0.8)))
+        timeout = float(config.get("timeout", 3.0))
+
+        # 1단계: Windows UIA 객체 속성 탐색
+        if search_mode in ("hybrid", "uia_only"):
+            uia_target_name = obj.get("name")
+            uia_orig_name = obj.get("orig_name")
+            uia_ctrl_type = obj.get("control_type")
+            uia_auto_id = obj.get("automation_id")
+            uia_win_title = obj.get("window_title")
+            uia_cls_name = obj.get("class_name")
+
+            if uia_target_name or uia_orig_name or uia_auto_id:
+                uia_pos = uia_service.find_control(
+                    name=uia_target_name,
+                    control_type=uia_ctrl_type,
+                    automation_id=uia_auto_id,
+                    orig_name=uia_orig_name,
+                    window_title=uia_win_title,
+                    class_name=uia_cls_name,
+                    auto_focus_scroll=auto_focus_scroll
+                )
+                if uia_pos:
+                    ux, uy = int(uia_pos[0]), int(uia_pos[1])
+                    return ux, uy, f"[UIA 객체: '{obj_name}'] ({ux}, {uy})"
+
+            if search_mode == "uia_only":
+                if fallback_coords and obj.get("x") is not None and obj.get("y") is not None:
+                    ox = int(obj.get("x")) + int(obj.get("width", 0)) // 2
+                    oy = int(obj.get("y")) + int(obj.get("height", 0)) // 2
+                    return ox, oy, f"[UIA 폴백 좌표: '{obj_name}'] ({ox}, {oy})"
+                raise RuntimeError(f"화면에서 {point_label} UIA 컨트롤 '{obj_name}'를 찾지 못했습니다.")
+
+        # 2단계: OpenCV 템플릿 이미지 매칭 탐색
+        tpl_img, _ = load_template_image(obj, config)
+        if tpl_img is not None:
+            start_time = time.time()
+            while time.time() - start_time <= timeout:
+                if context.is_cancelled():
+                    raise asyncio.CancelledError("사용자 또는 비상 핫키에 의해 중단되었습니다.")
+                match_res = find_image_on_screen(tpl_img, confidence=confidence)
+                if match_res:
+                    cx, cy, score = match_res
+                    return int(cx), int(cy), f"[이미지 일치({score:.0%}): '{obj_name}'] ({int(cx)}, {int(cy)})"
+                await asyncio.sleep(0.15)
+
+        # 3단계: 원래 선택 좌표 폴백
+        if fallback_coords and obj.get("x") is not None and obj.get("y") is not None:
+            ox = int(obj.get("x")) + int(obj.get("width", 0)) // 2
+            oy = int(obj.get("y")) + int(obj.get("height", 0)) // 2
+            return ox, oy, f"[폴백 좌표: '{obj_name}'] ({ox}, {oy})"
+
+        raise RuntimeError(f"화면에서 {point_label} UI 오브젝트 '{obj_name}'를 찾지 못했습니다.")
+
+    # 좌표 모드
+    if x is None or y is None or str(x).strip() == "" or str(y).strip() == "":
+        raise ValueError(f"{point_label} 좌표(X, Y)가 지정되지 않았습니다.")
+    rx = int(float(render_template(str(x), context.variables)))
+    ry = int(float(render_template(str(y), context.variables)))
+    return rx, ry, f"좌표 ({rx}, {ry})"
+
+
 class GeneralNode(BaseNode):
 
     def __init__(self, id: str, name: str, subtype: str, config: Dict[str, Any]):
@@ -683,6 +847,231 @@ class GeneralNode(BaseNode):
             if not ok:
                 raise RuntimeError(msg)
             return f"프로세스 강제 종료 성공: {msg}"
+
+        elif subtype == "mouse_drag":
+            start_mode = self.config.get("start_mode", "coordinate")  # coordinate | object
+            end_mode = self.config.get("end_mode", "coordinate")      # coordinate | object
+            start_obj = self.config.get("start_object_data") or (self.config.get("object_data") if start_mode == "object" else None)
+            end_obj = self.config.get("end_object_data")
+            button = self.config.get("button", "left")
+            move_mode = self.config.get("move_mode", "smooth")        # instant | smooth
+            duration = max(0.0, float(self.config.get("duration", 0.5)))
+
+            sx, sy, start_desc = await resolve_target_point_async(
+                mode=start_mode,
+                x=self.config.get("start_x"),
+                y=self.config.get("start_y"),
+                object_data=start_obj,
+                config=self.config,
+                context=context,
+                point_label="드래그 시작점"
+            )
+            ex, ey, end_desc = await resolve_target_point_async(
+                mode=end_mode,
+                x=self.config.get("end_x"),
+                y=self.config.get("end_y"),
+                object_data=end_obj,
+                config=self.config,
+                context=context,
+                point_label="드래그 끝점"
+            )
+
+            if context.is_cancelled():
+                raise asyncio.CancelledError("사용자 또는 비상 핫키에 의해 중단되었습니다.")
+
+            pyautogui.moveTo(sx, sy, duration=0)
+            await asyncio.sleep(0.05)
+            pyautogui.mouseDown(x=sx, y=sy, button=button)
+            try:
+                await asyncio.sleep(0.05)
+                if move_mode == "smooth" and duration > 0:
+                    pyautogui.moveTo(ex, ey, duration=duration)
+                else:
+                    pyautogui.moveTo(ex, ey, duration=0)
+                await asyncio.sleep(0.05)
+            finally:
+                pyautogui.mouseUp(x=ex, y=ey, button=button)
+
+            move_label = f"부드러운 이동({duration}s)" if (move_mode == "smooth" and duration > 0) else "즉시(순간이동)"
+            return f"마우스 드래그 앤 드롭 완료: {start_desc} ➔ {end_desc} (방식: {move_label}, 버튼: {button})"
+
+        elif subtype == "clipboard_read":
+            output_var = str(self.config.get("output_variable", "clipboard_text")).strip() or "clipboard_text"
+            clip_text = pyperclip.paste()
+            if clip_text is None:
+                clip_text = ""
+            else:
+                clip_text = str(clip_text)
+
+            context.variables[output_var] = clip_text
+            context.variables["last_output"] = clip_text
+
+            preview = clip_text[:50] + ("..." if len(clip_text) > 50 else "")
+            return f"클립보드 읽기 성공 (변수 '{{{{{output_var}}}}}'에 {len(clip_text)}자 저장): {preview}"
+
+        elif subtype == "file_read":
+            raw_path = self.config.get("file_path", "")
+            if not raw_path or not str(raw_path).strip():
+                raise ValueError("읽어올 텍스트 파일 경로가 지정되지 않았습니다.")
+
+            resolved_path_str = render_template(str(raw_path).strip(), context.variables).strip().strip('"').strip("'")
+            target_path = Path(resolved_path_str)
+
+            if not target_path.exists():
+                raise FileNotFoundError(f"지정한 파일을 찾을 수 없습니다: '{target_path}'")
+            if target_path.is_dir():
+                raise IsADirectoryError(f"지정한 경로는 파일이 아닌 디렉터리입니다: '{target_path}'")
+
+            encoding = str(self.config.get("encoding", "utf-8")).strip() or "utf-8"
+            try:
+                text_content = target_path.read_text(encoding=encoding if encoding != "utf-8" else "utf-8-sig")
+            except UnicodeDecodeError:
+                try:
+                    text_content = target_path.read_text(encoding="cp949")
+                except Exception:
+                    text_content = target_path.read_text(encoding="utf-8", errors="replace")
+
+            output_var = str(self.config.get("output_variable", "file_content")).strip() or "file_content"
+            context.variables[output_var] = text_content
+            context.variables["last_output"] = text_content
+
+            preview = text_content[:50].replace("\n", " ") + ("..." if len(text_content) > 50 else "")
+            return f"텍스트 파일 읽기 성공 ('{target_path}', 변수 '{{{{{output_var}}}}}'에 {len(text_content)}자 저장): {preview}"
+
+        elif subtype == "file_write":
+            raw_path = self.config.get("file_path", "")
+            if not raw_path or not str(raw_path).strip():
+                raise ValueError("저장할 파일 경로가 지정되지 않았습니다.")
+
+            now = datetime.now()
+            resolved_path_str = render_template(str(raw_path).strip(), context.variables).strip().strip('"').strip("'")
+            resolved_path_str = resolved_path_str.replace("{{timestamp}}", now.strftime("%Y%m%d_%H%M%S"))
+            resolved_path_str = resolved_path_str.replace("{{date}}", now.strftime("%Y%m%d"))
+            resolved_path_str = resolved_path_str.replace("{{time}}", now.strftime("%H%M%S"))
+
+            target_path = Path(resolved_path_str)
+            overwrite = bool(self.config.get("overwrite", False))
+
+            if target_path.exists() and not overwrite:
+                raise FileExistsError(
+                    f"파일 쓰기 오류: 대상 파일이 이미 존재하며 '덮어쓰기 허용'이 선택 해제되어 있습니다. ('{target_path}')"
+                )
+
+            raw_content = self.config.get("content", "")
+            resolved_content = render_template(str(raw_content), context.variables)
+            resolved_content = resolved_content.replace("{{timestamp}}", now.strftime("%Y%m%d_%H%M%S"))
+            resolved_content = resolved_content.replace("{{date}}", now.strftime("%Y%m%d"))
+            resolved_content = resolved_content.replace("{{time}}", now.strftime("%H%M%S"))
+
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            encoding = str(self.config.get("encoding", "utf-8")).strip() or "utf-8"
+            target_path.write_text(resolved_content, encoding=encoding)
+
+            overwrite_label = "덮어쓰기 허용" if overwrite else "신규 생성"
+            return f"파일 쓰기 성공 ('{target_path}', {len(resolved_content)}자 기록, 모드: {overwrite_label})"
+
+        elif subtype == "message_box":
+            raw_title = self.config.get("title", "알림")
+            raw_message = self.config.get("message", "")
+            message_type = str(self.config.get("message_type", "info")).lower()    # info | warning | error
+            button_type = str(self.config.get("button_type", "ok")).lower()        # ok | yes_no | continue_stop
+            output_var = str(self.config.get("output_variable", "dialog_result")).strip() or "dialog_result"
+
+            resolved_title = render_template(str(raw_title), context.variables)
+            resolved_message = render_template(str(raw_message), context.variables)
+
+            ret_code = await asyncio.to_thread(
+                show_topmost_message_box,
+                resolved_title,
+                resolved_message,
+                message_type,
+                button_type
+            )
+
+            if button_type == "yes_no":
+                # IDYES = 6, IDNO = 7
+                is_yes = (ret_code == 6)
+                context.variables[output_var] = is_yes
+                context.variables["last_output"] = is_yes
+                choice_str = "예 (True)" if is_yes else "아니오 (False)"
+                return f"사용자 대화상자 응답 완료: [{choice_str}] 선택됨 (변수 '{{{{{output_var}}}}}' = {is_yes})"
+
+            elif button_type == "continue_stop":
+                # IDOK(1) = 계속, IDCANCEL(2) = 중지
+                if ret_code == 1:
+                    return f"사용자 대화상자 응답 완료: [계속] 선택됨 -> 후속 노드 실행을 진행합니다."
+                else:
+                    raise RuntimeError(
+                        f"사용자 대화상자('{resolved_title}')에서 '중지' 버튼을 선택하여 워크플로우를 종료합니다."
+                    )
+
+            else:
+                return f"사용자 대화상자 확인 완료 (제목: '{resolved_title}')"
+
+        elif subtype == "mouse_scroll":
+            target_mode = self.config.get("target_mode", "object")       # object (기본값) | current (현재 활성창)
+            direction = self.config.get("direction", "vertical")         # vertical (상하) | horizontal (좌우)
+            distance_mode = self.config.get("distance_mode", "ticks")    # ticks | page_down | page_up | end | home
+            ticks = int(self.config.get("ticks", 5))
+            ticks_direction = self.config.get("ticks_direction", "backward")  # backward (아래/오른쪽) | forward (위/왼쪽)
+
+            dir_label = "좌우(가로)" if direction == "horizontal" else "상하(세로)"
+
+            # 1) 현재 활성창 모드: 스크롤 가능 여부와 무관하게 무조건 휠 칸수 신호 전송
+            if target_mode == "current":
+                abs_ticks = max(1, abs(ticks))
+                is_backward = (ticks < 0) or (ticks > 0 and ticks_direction != "forward")
+                if direction == "vertical":
+                    signed_ticks = -abs_ticks if is_backward else abs_ticks
+                    sub_label = f"아래로 {abs_ticks}칸" if is_backward else f"위로 {abs_ticks}칸"
+                else:
+                    signed_ticks = abs_ticks if is_backward else -abs_ticks
+                    sub_label = f"오른쪽으로 {abs_ticks}칸" if is_backward else f"왼쪽으로 {abs_ticks}칸"
+
+                uia_service.send_mouse_wheel(direction=direction, signed_ticks=signed_ticks, x=None, y=None)
+                await asyncio.sleep(0.05)
+                return f"마우스 스크롤 완료 [현재 활성창 모드]: {dir_label} 방향으로 휠 {sub_label} 신호 전송"
+
+            # 2) 오브젝트 선택 모드 (기본값): UI 오브젝트 탐색 ➔ 포커스 부여 ➔ 비-키보드 스크롤 제어 및 경계 인식
+            tx, ty, obj_desc = await resolve_target_point_async(
+                mode="object",
+                x=self.config.get("x"),
+                y=self.config.get("y"),
+                object_data=self.config.get("object_data"),
+                config=self.config,
+                context=context,
+                point_label="스크롤 대상 오브젝트"
+            )
+
+            scroll_res = uia_service.scroll_target_element(
+                target_x=tx,
+                target_y=ty,
+                object_data=self.config.get("object_data"),
+                direction=direction,
+                distance_mode=distance_mode,
+                ticks=ticks,
+                ticks_direction=ticks_direction
+            )
+
+            context.variables["scroll_at_start"] = bool(scroll_res.get("at_start", False))
+            context.variables["scroll_at_end"] = bool(scroll_res.get("at_end", False))
+
+            dist_label_map = {
+                "ticks": f"휠 {abs(ticks)}칸 ({'아래/오른쪽' if ((ticks < 0) or (ticks > 0 and ticks_direction != 'forward')) else '위/왼쪽'})",
+                "page_down": "한 페이지 뒤로 (Page Down 효과)",
+                "page_up": "한 페이지 앞으로 (Page Up 효과)",
+                "end": "맨 끝으로 (End 효과)",
+                "home": "맨 처음으로 (Home 효과)",
+            }
+            dist_label = dist_label_map.get(distance_mode, distance_mode)
+            boundary_note = ""
+            if scroll_res.get("at_end"):
+                boundary_note = " [스크롤 맨 끝 도달]"
+            elif scroll_res.get("at_start"):
+                boundary_note = " [스크롤 맨 처음 도달]"
+
+            method_used = scroll_res.get("method_used", "Hybrid")
+            return f"마우스 스크롤 완료 [오브젝트 모드]: {obj_desc} | 방향: {dir_label} | 거리: {dist_label} (제어방식: {method_used}){boundary_note}"
 
         else:
             raise ValueError(f"지원하지 않는 일반 노드 타입입니다: {subtype}")

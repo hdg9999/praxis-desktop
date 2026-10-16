@@ -3,10 +3,16 @@ import { Handle, Position, NodeProps, useReactFlow } from '@xyflow/react';
 import {
   MousePointer,
   Move,
+  Hand,
+  ArrowUpDown,
   Type,
   Command,
   Clock,
   Copy,
+  ClipboardPaste,
+  FileText,
+  Save,
+  MessageSquare,
   X,
   AppWindow,
   Maximize2,
@@ -39,10 +45,16 @@ const GeneralNode: React.FC<NodeProps> = ({ id, data, selected }) => {
     switch (subtype) {
       case 'mouse_click': return <MousePointer className="w-4 h-4 text-blue-400" />;
       case 'mouse_move': return <Move className="w-4 h-4 text-cyan-400" />;
+      case 'mouse_drag': return <Hand className="w-4 h-4 text-indigo-400" />;
+      case 'mouse_scroll': return <ArrowUpDown className="w-4 h-4 text-sky-400" />;
       case 'keyboard_type': return <Type className="w-4 h-4 text-emerald-400" />;
       case 'keyboard_hotkey': return <Command className="w-4 h-4 text-indigo-400" />;
       case 'delay': return <Clock className="w-4 h-4 text-amber-400" />;
       case 'clipboard_copy': return <Copy className="w-4 h-4 text-purple-400" />;
+      case 'clipboard_read': return <ClipboardPaste className="w-4 h-4 text-violet-400" />;
+      case 'file_read': return <FileText className="w-4 h-4 text-emerald-400" />;
+      case 'file_write': return <Save className="w-4 h-4 text-teal-400" />;
+      case 'message_box': return <MessageSquare className="w-4 h-4 text-amber-400" />;
       case 'window_activate': return <AppWindow className="w-4 h-4 text-sky-400" />;
       case 'window_maximize': return <Maximize2 className="w-4 h-4 text-cyan-400" />;
       case 'window_minimize': return <Minimize2 className="w-4 h-4 text-slate-400" />;
@@ -71,6 +83,32 @@ const GeneralNode: React.FC<NodeProps> = ({ id, data, selected }) => {
       const coordStr = `(${cfg.x ?? 'X'}, ${cfg.y ?? 'Y'})`;
       return `${coordStr} ${cfg.button ?? 'left'}${moveLabel}`;
     }
+    if (subtype === 'mouse_move') {
+      return `(${cfg.x ?? 0}, ${cfg.y ?? 0}) · ⌛${cfg.duration ?? 0.2}s`;
+    }
+    if (subtype === 'mouse_drag') {
+      const sMode = cfg.start_mode === 'object' ? `🎯${cfg.start_object_data?.name || '오브젝트'}` : `(${cfg.start_x ?? 0},${cfg.start_y ?? 0})`;
+      const eMode = cfg.end_mode === 'object' ? `🎯${cfg.end_object_data?.name || '오브젝트'}` : `(${cfg.end_x ?? 0},${cfg.end_y ?? 0})`;
+      const mLabel = cfg.move_mode === 'instant' ? '즉시' : `${cfg.duration ?? 0.5}s`;
+      return `✋ ${sMode} → ${eMode} (${mLabel})`;
+    }
+    if (subtype === 'mouse_scroll') {
+      const dirLabel = cfg.direction === 'horizontal' ? '좌우' : '상하';
+      const targetLabel = cfg.target_mode === 'current'
+        ? '활성창'
+        : `🎯${cfg.object_data?.name || '오브젝트'}`;
+      const distMap: Record<string, string> = {
+        ticks: `휠 ${cfg.ticks ?? 5}칸(${cfg.ticks_direction === 'forward' ? (cfg.direction === 'horizontal' ? '좌' : '위') : (cfg.direction === 'horizontal' ? '우' : '아래')})`,
+        page_down: '1페이지 뒤로',
+        page_up: '1페이지 앞으로',
+        end: '맨끝으로',
+        home: '맨처음으로',
+      };
+      const distLabel = cfg.target_mode === 'current'
+        ? distMap.ticks
+        : (distMap[cfg.distance_mode || 'ticks'] || distMap.ticks);
+      return `↕️ [${dirLabel}·${targetLabel}] ${distLabel}`;
+    }
     if (subtype === 'keyboard_type') {
       const typeLabel = cfg.type_mode === 'smooth' ? ` · ⌨️${cfg.interval ?? 0.05}s` : '';
       return `"${(cfg.text || '').slice(0, 15)}${(cfg.text || '').length > 15 ? '...' : ''}"${typeLabel}`;
@@ -86,6 +124,21 @@ const GeneralNode: React.FC<NodeProps> = ({ id, data, selected }) => {
       return t('nodes.fixedDelay', { sec: cfg.seconds ?? 1 });
     }
     if (subtype === 'clipboard_copy') return `${t('common.copy')}: "${(cfg.text || '').slice(0, 15)}"`;
+    if (subtype === 'clipboard_read') return `📋 → {{${cfg.output_variable || 'clipboard_text'}}}`;
+    if (subtype === 'file_read') {
+      const fname = (cfg.file_path || '').split(/[\\/]/).pop() || '파일 미지정';
+      return `📄 ${fname} → {{${cfg.output_variable || 'file_content'}}}`;
+    }
+    if (subtype === 'file_write') {
+      const fname = (cfg.file_path || '').split(/[\\/]/).pop() || '파일 미지정';
+      const ovLabel = cfg.overwrite ? '덮어쓰기' : '보호';
+      return `💾 ${fname} [${ovLabel}]`;
+    }
+    if (subtype === 'message_box') {
+      const btnMap: Record<string, string> = { ok: '확인', yes_no: '예/아니오', continue_stop: '계속/중지' };
+      const typeIconMap: Record<string, string> = { info: 'ℹ️', warning: '⚠️', error: '🚨' };
+      return `${typeIconMap[cfg.message_type || 'info'] || '💬'} [${btnMap[cfg.button_type || 'ok'] || '확인'}] "${(cfg.title || '알림').slice(0, 12)}"`;
+    }
     if (subtype === 'window_activate') {
       if (cfg.target_mode === 'object' && cfg.object_data) {
         return `🎯 [${t('skills.general_window_activate.label')}] ${cfg.object_data.name || cfg.object_data.window_title || 'Object'}`;

@@ -8,6 +8,11 @@ import {
   RotateCcw,
   Zap,
   Move,
+  Hand,
+  ArrowUpDown,
+  ClipboardPaste,
+  FileText,
+  MessageSquare,
   Keyboard,
   AppWindow,
   Maximize2,
@@ -42,7 +47,7 @@ interface PropertyInspectorProps {
   onUpdateNodeData: (nodeId: string, label: string, config: Record<string, any>) => void;
   onDeleteNode: (nodeId: string) => void;
   onClose: () => void;
-  onOpenObjectPicker?: () => void;
+  onOpenObjectPicker?: (targetField?: string | any) => void;
 }
 
 export const PropertyInspector: React.FC<PropertyInspectorProps> = ({
@@ -76,25 +81,34 @@ export const PropertyInspector: React.FC<PropertyInspectorProps> = ({
     onUpdateNodeData(selectedNode.id, nodeData.label, updated);
   };
 
-  const handleBrowseFile = async () => {
+  const handleMultiConfigChange = (patch: Record<string, any>) => {
+    const updated = { ...cfg, ...patch };
+    onUpdateNodeData(selectedNode.id, nodeData.label, updated);
+  };
+
+  const handleBrowseFileForKey = async (configKey: string, acceptExts: string = '*') => {
     if (window.electronAPI?.openFileDialog) {
       const selectedPath = await window.electronAPI.openFileDialog();
       if (selectedPath) {
-        handleConfigChange('program_path', selectedPath);
+        handleConfigChange(configKey, selectedPath);
       }
       return;
     }
     const input = document.createElement('input');
     input.type = 'file';
-    input.accept = '.exe,.bat,.cmd,.lnk,*';
+    input.accept = acceptExts;
     input.onchange = (e: any) => {
       const file = e.target.files?.[0];
       if (file) {
         const filePath = file.path || file.name;
-        handleConfigChange('program_path', filePath);
+        handleConfigChange(configKey, filePath);
       }
     };
     input.click();
+  };
+
+  const handleBrowseFile = async () => {
+    await handleBrowseFileForKey('program_path', '.exe,.bat,.cmd,.lnk,*');
   };
 
   return (
@@ -105,6 +119,12 @@ export const PropertyInspector: React.FC<PropertyInspectorProps> = ({
           {isEnd && <Flag className="w-4 h-4 text-rose-400" />}
           {isAi && <Sparkles className="w-4 h-4 text-purple-400" />}
           {isAgent && <Bot className="w-4 h-4 text-indigo-400" />}
+          {subtype === 'mouse_drag' && <Hand className="w-4 h-4 text-indigo-400" />}
+          {subtype === 'mouse_scroll' && <ArrowUpDown className="w-4 h-4 text-sky-400" />}
+          {subtype === 'clipboard_read' && <ClipboardPaste className="w-4 h-4 text-violet-400" />}
+          {subtype === 'file_read' && <FileText className="w-4 h-4 text-emerald-400" />}
+          {subtype === 'file_write' && <Save className="w-4 h-4 text-teal-400" />}
+          {subtype === 'message_box' && <MessageSquare className="w-4 h-4 text-amber-400" />}
           {subtype === 'screenshot' && <Camera className="w-4 h-4 text-teal-400" />}
           {subtype === 'launch_program' && <Rocket className="w-4 h-4 text-orange-400" />}
           {subtype === 'window_close' && <XCircle className="w-4 h-4 text-rose-400" />}
@@ -1821,6 +1841,856 @@ export const PropertyInspector: React.FC<PropertyInspectorProps> = ({
                     ? '🔒 Safety Guardrail: Windows system & core Praxis Desktop processes cannot be killed.'
                     : '🔒 안전 가드레일: Windows 시스템 프로세스 및 Praxis Desktop 핵심 프로세스는 강제 종료할 수 없습니다.'}
                 </div>
+              </div>
+            </div>
+          )}
+
+          {/* 1. 마우스 드래그 앤 드롭 노드 (Mouse Drag & Drop) */}
+          {subtype === 'mouse_drag' && (
+            <div className="space-y-4">
+              {/* 드래그 시작 지점 설정 */}
+              <div className="p-3 bg-slate-950/80 rounded-xl border border-slate-800 space-y-3">
+                <div className="flex items-center justify-between">
+                  <label className="text-[11px] font-semibold text-indigo-300 flex items-center gap-1">
+                    <span>①</span> {isEn ? 'Drag Start Point' : '드래그 시작 지점 (From)'}
+                  </label>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-950/60 text-indigo-300 border border-indigo-800/50">
+                    {(cfg.start_mode || 'coordinate') === 'object' ? (isEn ? 'Object' : '오브젝트') : (isEn ? 'Coordinate' : '좌표')}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 gap-1.5 p-1 bg-slate-900 rounded-lg border border-slate-800">
+                  <button
+                    type="button"
+                    onClick={() => handleConfigChange('start_mode', 'coordinate')}
+                    className={`py-1 text-xs rounded-md font-medium transition-all ${
+                      (cfg.start_mode || 'coordinate') === 'coordinate'
+                        ? 'bg-indigo-600 text-white shadow-sm'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    {isEn ? 'Coordinate' : '좌표 지정'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleConfigChange('start_mode', 'object')}
+                    className={`py-1 text-xs rounded-md font-medium transition-all ${
+                      cfg.start_mode === 'object'
+                        ? 'bg-indigo-600 text-white shadow-sm'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    {isEn ? 'UI Object' : '오브젝트 선택'}
+                  </button>
+                </div>
+
+                {(cfg.start_mode || 'coordinate') === 'coordinate' ? (
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-[10px] text-slate-400">{isEn ? 'Start X (px)' : '시작 X 좌표'}</label>
+                      <input
+                        type="number"
+                        value={cfg.start_x ?? 300}
+                        onChange={(e) => handleConfigChange('start_x', Number(e.target.value))}
+                        className="w-full px-2.5 py-1 text-xs bg-slate-900 border border-slate-700 rounded text-slate-200 mt-1"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-slate-400">{isEn ? 'Start Y (px)' : '시작 Y 좌표'}</label>
+                      <input
+                        type="number"
+                        value={cfg.start_y ?? 300}
+                        onChange={(e) => handleConfigChange('start_y', Number(e.target.value))}
+                        className="w-full px-2.5 py-1 text-xs bg-slate-900 border border-slate-700 rounded text-slate-200 mt-1"
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-2.5">
+                    {cfg.start_object_data ? (
+                      <div className="p-2.5 bg-slate-900 rounded-lg border border-slate-800 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] font-medium text-indigo-300 truncate max-w-[130px]">
+                            🎯 {cfg.start_object_data.name || '시작 오브젝트'}
+                          </span>
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => onOpenObjectPicker?.('start_object_data')}
+                              className="text-[10px] text-slate-300 hover:text-white px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700"
+                            >
+                              {isEn ? 'Reselect' : '다시 선택'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleConfigChange('start_object_data', null)}
+                              className="text-[10px] text-rose-400 hover:text-rose-300 px-1.5 py-0.5 rounded bg-rose-950/40"
+                            >
+                              {isEn ? 'Remove' : '제거'}
+                            </button>
+                          </div>
+                        </div>
+                        {(cfg.start_object_data.base64_image || cfg.start_object_data.image_url) && (
+                          <div className="rounded bg-slate-950 border border-slate-800 p-1.5 flex items-center justify-center max-h-[70px] overflow-hidden">
+                            <img
+                              src={cfg.start_object_data.base64_image || resolveImageUrl(cfg.start_object_data.image_url)}
+                              alt={cfg.start_object_data.name}
+                              className="max-h-[60px] object-contain rounded"
+                            />
+                          </div>
+                        )}
+                        <div className="text-[10px] text-slate-400 flex justify-between">
+                          <span className="truncate">{cfg.start_object_data.window_title || '-'}</span>
+                          <span className="font-mono text-indigo-400">({cfg.start_object_data.x}, {cfg.start_object_data.y})</span>
+                        </div>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => onOpenObjectPicker?.('start_object_data')}
+                        className="w-full py-2 px-3 rounded-lg bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/40 text-xs font-medium flex items-center justify-center gap-1.5 transition-all"
+                      >
+                        <Crosshair className="w-3.5 h-3.5" />
+                        {isEn ? 'Pick Start Object from Screen' : '시작 UI 오브젝트 선택하기'}
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* 드롭 끝 지점 설정 */}
+              <div className="p-3 bg-slate-950/80 rounded-xl border border-slate-800 space-y-3">
+                <div className="flex items-center justify-between">
+                  <label className="text-[11px] font-semibold text-cyan-300 flex items-center gap-1">
+                    <span>②</span> {isEn ? 'Drop End Point' : '드롭 끝 지점 (To)'}
+                  </label>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-950/60 text-cyan-300 border border-cyan-800/50">
+                    {(cfg.end_mode || 'coordinate') === 'object' ? (isEn ? 'Object' : '오브젝트') : (isEn ? 'Coordinate' : '좌표')}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 gap-1.5 p-1 bg-slate-900 rounded-lg border border-slate-800">
+                  <button
+                    type="button"
+                    onClick={() => handleConfigChange('end_mode', 'coordinate')}
+                    className={`py-1 text-xs rounded-md font-medium transition-all ${
+                      (cfg.end_mode || 'coordinate') === 'coordinate'
+                        ? 'bg-cyan-600 text-white shadow-sm'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    {isEn ? 'Coordinate' : '좌표 지정'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleConfigChange('end_mode', 'object')}
+                    className={`py-1 text-xs rounded-md font-medium transition-all ${
+                      cfg.end_mode === 'object'
+                        ? 'bg-cyan-600 text-white shadow-sm'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    {isEn ? 'UI Object' : '오브젝트 선택'}
+                  </button>
+                </div>
+
+                {(cfg.end_mode || 'coordinate') === 'coordinate' ? (
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-[10px] text-slate-400">{isEn ? 'End X (px)' : '끝 X 좌표'}</label>
+                      <input
+                        type="number"
+                        value={cfg.end_x ?? 600}
+                        onChange={(e) => handleConfigChange('end_x', Number(e.target.value))}
+                        className="w-full px-2.5 py-1 text-xs bg-slate-900 border border-slate-700 rounded text-slate-200 mt-1"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-slate-400">{isEn ? 'End Y (px)' : '끝 Y 좌표'}</label>
+                      <input
+                        type="number"
+                        value={cfg.end_y ?? 300}
+                        onChange={(e) => handleConfigChange('end_y', Number(e.target.value))}
+                        className="w-full px-2.5 py-1 text-xs bg-slate-900 border border-slate-700 rounded text-slate-200 mt-1"
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-2.5">
+                    {cfg.end_object_data ? (
+                      <div className="p-2.5 bg-slate-900 rounded-lg border border-slate-800 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] font-medium text-cyan-300 truncate max-w-[130px]">
+                            🎯 {cfg.end_object_data.name || '끝 오브젝트'}
+                          </span>
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => onOpenObjectPicker?.('end_object_data')}
+                              className="text-[10px] text-slate-300 hover:text-white px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700"
+                            >
+                              {isEn ? 'Reselect' : '다시 선택'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleConfigChange('end_object_data', null)}
+                              className="text-[10px] text-rose-400 hover:text-rose-300 px-1.5 py-0.5 rounded bg-rose-950/40"
+                            >
+                              {isEn ? 'Remove' : '제거'}
+                            </button>
+                          </div>
+                        </div>
+                        {(cfg.end_object_data.base64_image || cfg.end_object_data.image_url) && (
+                          <div className="rounded bg-slate-950 border border-slate-800 p-1.5 flex items-center justify-center max-h-[70px] overflow-hidden">
+                            <img
+                              src={cfg.end_object_data.base64_image || resolveImageUrl(cfg.end_object_data.image_url)}
+                              alt={cfg.end_object_data.name}
+                              className="max-h-[60px] object-contain rounded"
+                            />
+                          </div>
+                        )}
+                        <div className="text-[10px] text-slate-400 flex justify-between">
+                          <span className="truncate">{cfg.end_object_data.window_title || '-'}</span>
+                          <span className="font-mono text-cyan-400">({cfg.end_object_data.x}, {cfg.end_object_data.y})</span>
+                        </div>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => onOpenObjectPicker?.('end_object_data')}
+                        className="w-full py-2 px-3 rounded-lg bg-cyan-600/20 hover:bg-cyan-600/30 text-cyan-300 border border-cyan-500/40 text-xs font-medium flex items-center justify-center gap-1.5 transition-all"
+                      >
+                        <Crosshair className="w-3.5 h-3.5" />
+                        {isEn ? 'Pick End Object from Screen' : '끝 UI 오브젝트 선택하기'}
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* 마우스 버튼 및 이동 방식 */}
+              <div className="pt-2 border-t border-slate-800 space-y-3">
+                <div>
+                  <label className="text-[11px] text-slate-400 block mb-1">
+                    {isEn ? 'Mouse Button' : '드래그 마우스 버튼'}
+                  </label>
+                  <select
+                    value={cfg.button || 'left'}
+                    onChange={(e) => handleConfigChange('button', e.target.value)}
+                    className="w-full px-2.5 py-1.5 text-xs bg-slate-950 border border-slate-700 rounded-lg text-slate-200"
+                  >
+                    <option value="left">{isEn ? 'Left Button (Default)' : '좌클릭 드래그 (기본)'}</option>
+                    <option value="right">{isEn ? 'Right Button' : '우클릭 드래그'}</option>
+                    <option value="middle">{isEn ? 'Middle Button' : '가운데 휠 버튼 드래그'}</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-[11px] text-slate-400 block mb-1">
+                    {isEn ? 'Mouse Movement Style' : '마우스 이동 방식'}
+                  </label>
+                  <div className="grid grid-cols-2 gap-1.5 p-1 bg-slate-950 rounded-lg border border-slate-800">
+                    <button
+                      type="button"
+                      onClick={() => handleConfigChange('move_mode', 'instant')}
+                      className={`py-1 text-xs rounded-md font-medium transition-all flex items-center justify-center gap-1 ${
+                        cfg.move_mode === 'instant'
+                          ? 'bg-blue-600 text-white shadow-sm'
+                          : 'text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      <Zap className="w-3 h-3" />
+                      {isEn ? 'Instant' : '즉시 (순간이동)'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleConfigChange('move_mode', 'smooth')}
+                      className={`py-1 text-xs rounded-md font-medium transition-all flex items-center justify-center gap-1 ${
+                        (cfg.move_mode || 'smooth') === 'smooth'
+                          ? 'bg-blue-600 text-white shadow-sm'
+                          : 'text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      <Move className="w-3 h-3" />
+                      {isEn ? 'Smooth' : '부드러운 이동'}
+                    </button>
+                  </div>
+                </div>
+
+                {(cfg.move_mode || 'smooth') === 'smooth' && (
+                  <div className="p-2.5 bg-slate-950 rounded-lg border border-slate-800 space-y-1.5">
+                    <div className="flex justify-between items-center text-[11px] text-slate-400">
+                      <span>{isEn ? 'Drag Duration (sec)' : '드래그 이동 시간 (초)'}</span>
+                      <span className="font-mono text-blue-400">{cfg.duration ?? 0.5}{isEn ? 's' : '초'}</span>
+                    </div>
+                    <input
+                      type="number"
+                      step="0.1"
+                      min="0.05"
+                      max="10"
+                      value={cfg.duration ?? 0.5}
+                      onChange={(e) => handleConfigChange('duration', Math.max(0.05, Number(e.target.value)))}
+                      className="w-full px-2.5 py-1 text-xs bg-slate-900 border border-slate-700 rounded text-slate-200"
+                    />
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* 2. 마우스 스크롤 노드 (Mouse Scroll) */}
+          {subtype === 'mouse_scroll' && (
+            <div className="space-y-3.5">
+              {/* 스크롤 대상 모드: 오브젝트 선택(기본값) vs 현재 활성창 */}
+              <div>
+                <label className="text-[11px] text-slate-400 block mb-1">
+                  {isEn ? 'Scroll Target Mode' : '스크롤 대상 지정 방식'}
+                </label>
+                <div className="grid grid-cols-2 gap-1.5 p-1 bg-slate-950 rounded-lg border border-slate-800">
+                  <button
+                    type="button"
+                    onClick={() => handleConfigChange('target_mode', 'object')}
+                    className={`py-1.5 text-xs rounded-md font-medium transition-all flex items-center justify-center gap-1 ${
+                      (cfg.target_mode || 'object') === 'object'
+                        ? 'bg-sky-600 text-white shadow-sm'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    <Crosshair className="w-3 h-3" />
+                    {isEn ? 'Select Object (Default)' : '오브젝트 선택 (기본)'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleMultiConfigChange({ target_mode: 'current', distance_mode: 'ticks' })}
+                    className={`py-1.5 text-xs rounded-md font-medium transition-all flex items-center justify-center gap-1 ${
+                      cfg.target_mode === 'current'
+                        ? 'bg-sky-600 text-white shadow-sm'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    <AppWindow className="w-3 h-3" />
+                    {isEn ? 'Current Active Window' : '현재 활성창'}
+                  </button>
+                </div>
+              </div>
+
+              {/* 오브젝트 선택 모드일 때: 타겟 오브젝트 선택 카드 */}
+              {(cfg.target_mode || 'object') === 'object' && (
+                <div className="space-y-2.5">
+                  {cfg.object_data ? (
+                    <div className="p-3 bg-slate-950 rounded-xl border border-slate-800 space-y-2.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-semibold text-sky-400 flex items-center gap-1">
+                          <Crosshair className="w-3.5 h-3.5" />
+                          {isEn ? 'Scroll Target Object' : '선택된 스크롤 대상 오브젝트'}
+                        </span>
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => onOpenObjectPicker?.('object_data')}
+                            className="text-[10px] text-slate-400 hover:text-slate-200 px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 flex items-center gap-1"
+                          >
+                            <RotateCcw className="w-2.5 h-2.5" /> {isEn ? 'Reselect' : '다시 선택'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleConfigChange('object_data', null)}
+                            className="text-[10px] text-rose-400 hover:text-rose-300 px-1.5 py-0.5 rounded bg-rose-950/40"
+                          >
+                            {isEn ? 'Remove' : '제거'}
+                          </button>
+                        </div>
+                      </div>
+
+                      {(cfg.object_data.base64_image || cfg.object_data.image_url) && (
+                        <div className="rounded-lg bg-slate-900 border border-slate-800/80 p-2 flex items-center justify-center max-h-[90px] overflow-hidden">
+                          <img
+                            src={cfg.object_data.base64_image || resolveImageUrl(cfg.object_data.image_url)}
+                            alt={cfg.object_data.name}
+                            className="max-h-[75px] object-contain rounded"
+                          />
+                        </div>
+                      )}
+
+                      <div className="text-[11px] space-y-1 bg-slate-900/60 p-2 rounded-lg border border-slate-800/60">
+                        <div className="flex justify-between">
+                          <span className="text-slate-500">{isEn ? 'Element:' : '요소명:'}</span>
+                          <span className="text-slate-200 font-medium truncate max-w-[150px]">{cfg.object_data.name || '-'}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-500">{isEn ? 'Window:' : '창 제목:'}</span>
+                          <span className="text-slate-300 truncate max-w-[150px]">{cfg.object_data.window_title || '-'}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-500">{isEn ? 'Control:' : '컨트롤:'}</span>
+                          <span className="text-sky-400 font-mono text-[10px]">{cfg.object_data.control_type || '-'}</span>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => onOpenObjectPicker?.('object_data')}
+                      className="w-full py-2.5 px-3 rounded-xl bg-gradient-to-r from-sky-600 to-blue-600 hover:from-sky-500 hover:to-blue-500 text-white font-semibold text-xs flex items-center justify-center gap-2 shadow-lg shadow-sky-600/20 transition-all"
+                    >
+                      <Crosshair className="w-4 h-4" />
+                      {isEn ? 'Pick Scrollable UI Object' : '화면에서 스크롤할 오브젝트 선택'}
+                    </button>
+                  )}
+
+                  <div className="p-2.5 bg-sky-950/25 border border-sky-900/50 rounded-lg text-[10px] text-slate-300 leading-relaxed">
+                    💡 {isEn
+                      ? 'Automatically focuses the selected UI object right before scrolling, resolves nested scrollbars via UIA ScrollPattern / Win32 ScrollInfo, and scrolls without keyboard shortcuts.'
+                      : '스크롤 직전 선택한 UI 오브젝트에 자동 포커스(Focus)를 맞춘 뒤, 중첩된 하위 스크롤 컨테이너까지 개별 식별하여 키보드 단축키 없이 정밀 스크롤합니다.'}
+                  </div>
+                </div>
+              )}
+
+              {/* 스크롤 방향: 상하(기본값) / 좌우 */}
+              <div className="pt-2 border-t border-slate-800">
+                <label className="text-[11px] text-slate-400 block mb-1">
+                  {isEn ? 'Scroll Axis Direction' : '스크롤 방향'}
+                </label>
+                <div className="grid grid-cols-2 gap-1.5 p-1 bg-slate-950 rounded-lg border border-slate-800">
+                  <button
+                    type="button"
+                    onClick={() => handleConfigChange('direction', 'vertical')}
+                    className={`py-1.5 text-xs rounded-md font-medium transition-all ${
+                      (cfg.direction || 'vertical') === 'vertical'
+                        ? 'bg-sky-600 text-white shadow-sm'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    ↕️ {isEn ? 'Vertical (Default)' : '상하 (기본값)'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleConfigChange('direction', 'horizontal')}
+                    className={`py-1.5 text-xs rounded-md font-medium transition-all ${
+                      cfg.direction === 'horizontal'
+                        ? 'bg-sky-600 text-white shadow-sm'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    ↔️ {isEn ? 'Horizontal' : '좌우 (수평)'}
+                  </button>
+                </div>
+              </div>
+
+              {/* 현재 활성창 모드 + 좌우 방향 선택 시 주의 문구 */}
+              {cfg.target_mode === 'current' && cfg.direction === 'horizontal' && (
+                <div className="p-2.5 bg-amber-950/40 border border-amber-700/60 rounded-xl flex items-start gap-2 text-amber-300 text-[10px] leading-relaxed">
+                  <AlertTriangle className="w-4 h-4 shrink-0 text-amber-400 mt-0.5" />
+                  <div>
+                    <div className="font-semibold text-amber-200">
+                      {isEn ? 'Horizontal Scroll Notice (Current Window Mode)' : '현재 활성창 좌우 스크롤 유의사항'}
+                    </div>
+                    <p className="mt-0.5 text-amber-300/90">
+                      {isEn
+                        ? 'In "Current Active Window" mode, horizontal wheel signals (MOUSEEVENTF_HWHEEL) may not work in applications that do not natively handle horizontal mouse wheels. Use [Select Object] mode for guaranteed horizontal scrolling.'
+                        : '\'현재 활성창\' 모드에서는 좌우 방향 스크롤 신호(가로 마우스 휠)를 지원하지 않는 일부 프로그램에서 좌우 스크롤이 동작하지 않을 수 있습니다. 확실한 좌우 스크롤이 필요한 경우 [오브젝트 선택] 모드를 권장합니다.'}
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* 스크롤 거리 옵션 */}
+              <div className="pt-2 border-t border-slate-800 space-y-2.5">
+                <div>
+                  <label className="text-[11px] text-slate-400 block mb-1">
+                    {isEn ? 'Scroll Distance Mode' : '스크롤 이동 거리 방식'}
+                  </label>
+                  {cfg.target_mode === 'current' ? (
+                    <div className="space-y-1.5">
+                      <div className="px-2.5 py-1.5 text-xs bg-slate-950 border border-slate-800 rounded-lg text-sky-300 font-medium">
+                        ⚙️ {isEn ? 'Wheel Ticks Only (Active Window Mode)' : '휠 칸수 지정 (현재 활성창 모드 전용)'}
+                      </div>
+                      <p className="text-[10px] text-slate-500 leading-relaxed">
+                        {isEn
+                          ? '※ In Current Active Window mode, only Wheel Ticks can be specified since wheel signals are sent directly without inspecting UI scrollbars.'
+                          : '※ \'현재 활성창\' 모드에서는 스크롤바 유무를 판별하지 않고 활성 창에 마우스 휠 신호를 직접 전송하므로 \'휠 칸수\'만 지정 가능합니다.'}
+                      </p>
+                    </div>
+                  ) : (
+                    <select
+                      value={cfg.distance_mode || 'ticks'}
+                      onChange={(e) => handleConfigChange('distance_mode', e.target.value)}
+                      className="w-full px-2.5 py-1.5 text-xs bg-slate-950 border border-slate-700 rounded-lg text-slate-200 focus:outline-none focus:border-sky-500"
+                    >
+                      <option value="ticks">
+                        {isEn ? 'Wheel Ticks (Count)' : '휠 칸수 지정 (Wheel Ticks)'}
+                      </option>
+                      <option value="page_down">
+                        {isEn
+                          ? 'One Page Backward (Page Down effect · Non-shortcut)'
+                          : cfg.direction === 'horizontal'
+                          ? '한 페이지 뒤로 (오른쪽 한 화면 이동 · 비단축키)'
+                          : '한 페이지 뒤로 (Page Down과 동일 효과 · 비단축키)'}
+                      </option>
+                      <option value="page_up">
+                        {isEn
+                          ? 'One Page Forward (Page Up effect · Non-shortcut)'
+                          : cfg.direction === 'horizontal'
+                          ? '한 페이지 앞으로 (왼쪽 한 화면 이동 · 비단축키)'
+                          : '한 페이지 앞으로 (Page Up과 동일 효과 · 비단축키)'}
+                      </option>
+                      <option value="end">
+                        {isEn
+                          ? 'To the Very End (End effect · Boundary detected)'
+                          : '맨 끝으로 (End 키와 동일 효과 · 끝 도달 감지)'}
+                      </option>
+                      <option value="home">
+                        {isEn
+                          ? 'To the Very Beginning (Home effect · Boundary detected)'
+                          : '맨 처음으로 (Home 키와 동일 효과 · 처음 도달 감지)'}
+                      </option>
+                    </select>
+                  )}
+                </div>
+
+                {/* 휠 칸수 모드일 때: 세부 방향(아래/위 또는 오른쪽/왼쪽) 및 칸수 입력 */}
+                {(cfg.target_mode === 'current' || (cfg.distance_mode || 'ticks') === 'ticks') && (
+                  <div className="p-3 bg-slate-950 rounded-xl border border-slate-800 space-y-2.5">
+                    <div>
+                      <label className="text-[10px] text-slate-400 block mb-1">
+                        {isEn ? 'Wheel Direction' : '휠 회전 방향'}
+                      </label>
+                      <div className="grid grid-cols-2 gap-1.5 p-1 bg-slate-900 rounded-lg border border-slate-800">
+                        <button
+                          type="button"
+                          onClick={() => handleConfigChange('ticks_direction', 'backward')}
+                          className={`py-1 text-xs rounded font-medium transition-all ${
+                            (cfg.ticks_direction || 'backward') === 'backward'
+                              ? 'bg-sky-600 text-white'
+                              : 'text-slate-400 hover:text-slate-200'
+                          }`}
+                        >
+                          {cfg.direction === 'horizontal'
+                            ? (isEn ? '▶ Scroll Right' : '▶ 오른쪽으로 이동')
+                            : (isEn ? '▼ Scroll Down' : '▼ 아래로 내리기')}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleConfigChange('ticks_direction', 'forward')}
+                          className={`py-1 text-xs rounded font-medium transition-all ${
+                            cfg.ticks_direction === 'forward'
+                              ? 'bg-sky-600 text-white'
+                              : 'text-slate-400 hover:text-slate-200'
+                          }`}
+                        >
+                          {cfg.direction === 'horizontal'
+                            ? (isEn ? '◀ Scroll Left' : '◀ 왼쪽으로 이동')
+                            : (isEn ? '▲ Scroll Up' : '▲ 위로 올리기')}
+                        </button>
+                      </div>
+                    </div>
+
+                    <div>
+                      <div className="flex justify-between items-center text-[11px] text-slate-400 mb-1">
+                        <span>{isEn ? 'Wheel Ticks Count' : '스크롤 휠 칸수'}</span>
+                        <span className="font-mono text-sky-400">{cfg.ticks ?? 5}{isEn ? ' ticks' : '칸'}</span>
+                      </div>
+                      <input
+                        type="number"
+                        min="1"
+                        max="200"
+                        value={cfg.ticks ?? 5}
+                        onChange={(e) => handleConfigChange('ticks', Math.max(1, Number(e.target.value)))}
+                        className="w-full px-2.5 py-1 text-xs bg-slate-900 border border-slate-700 rounded text-slate-200"
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* 3. 클립보드 읽기 노드 (Clipboard Read) */}
+          {subtype === 'clipboard_read' && (
+            <div className="space-y-3">
+              <div>
+                <label className="text-[11px] text-slate-400 font-medium">
+                  {isEn ? 'Variable Name to Store Clipboard Text' : '저장할 변수명 (Output Variable)'}
+                </label>
+                <input
+                  type="text"
+                  value={cfg.output_variable || 'clipboard_text'}
+                  onChange={(e) => handleConfigChange('output_variable', e.target.value)}
+                  placeholder="clipboard_text"
+                  className="w-full px-2.5 py-1.5 text-xs bg-slate-950 border border-slate-700 rounded-lg text-violet-300 font-mono mt-1 focus:outline-none focus:border-violet-500"
+                />
+              </div>
+              <div className="p-2.5 bg-violet-950/25 border border-violet-900/50 rounded-xl text-[10px] text-slate-300 leading-relaxed space-y-1">
+                <div className="font-semibold text-violet-300">
+                  📋 {isEn ? 'How to Reference in Next Nodes' : '후속 노드에서 참조하는 방법'}
+                </div>
+                <p>
+                  {isEn
+                    ? `Reads current Windows clipboard text and saves it to {{${cfg.output_variable || 'clipboard_text'}}} and {{last_output}}.`
+                    : `현재 윈도우 클립보드에 들어있는 텍스트를 읽어와 {{${cfg.output_variable || 'clipboard_text'}}} 및 {{last_output}} 변수에 저장합니다.`}
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* 4. 텍스트 파일 읽기 노드 (Text File Read) */}
+          {subtype === 'file_read' && (
+            <div className="space-y-3.5">
+              <div>
+                <label className="text-[11px] text-slate-400 font-medium">
+                  {isEn ? 'File Path to Read' : '읽어올 텍스트 파일 경로'} <span className="text-emerald-400">*</span>
+                </label>
+                <div className="flex gap-1.5 mt-1">
+                  <input
+                    type="text"
+                    value={cfg.file_path || ''}
+                    onChange={(e) => handleConfigChange('file_path', e.target.value)}
+                    placeholder={isEn ? 'e.g. C:\\Data\\memo.txt' : '예: C:\\Data\\memo.txt'}
+                    className="flex-1 px-2.5 py-1.5 text-xs bg-slate-950 border border-slate-700 rounded-lg text-slate-200 font-mono focus:outline-none focus:border-emerald-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => handleBrowseFileForKey('file_path', '.txt,.csv,.json,.md,.log,.xml,.yaml,.yml,*')}
+                    className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs flex items-center gap-1 shrink-0"
+                    title={isEn ? 'Browse File' : '파일 찾아보기'}
+                  >
+                    <FolderOpen className="w-3.5 h-3.5 text-emerald-400" />
+                  </button>
+                </div>
+                <div className="text-[10px] text-slate-500 mt-1">
+                  {isEn ? 'Supports {{variable}} replacement in path.' : '경로에 {{변수명}} 치환을 사용할 수 있습니다.'}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-[11px] text-slate-400">
+                    {isEn ? 'Text Encoding' : '파일 인코딩'}
+                  </label>
+                  <select
+                    value={cfg.encoding || 'utf-8'}
+                    onChange={(e) => handleConfigChange('encoding', e.target.value)}
+                    className="w-full px-2.5 py-1.5 text-xs bg-slate-950 border border-slate-700 rounded-lg text-slate-200 mt-1"
+                  >
+                    <option value="utf-8">UTF-8 ({isEn ? 'Default/Auto' : '기본/자동감지'})</option>
+                    <option value="cp949">CP949 / EUC-KR ({isEn ? 'Korean ANSI' : '한글 윈도우'})</option>
+                    <option value="utf-16">UTF-16</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[11px] text-slate-400">
+                    {isEn ? 'Output Variable' : '저장할 변수명'}
+                  </label>
+                  <input
+                    type="text"
+                    value={cfg.output_variable || 'file_content'}
+                    onChange={(e) => handleConfigChange('output_variable', e.target.value)}
+                    placeholder="file_content"
+                    className="w-full px-2.5 py-1.5 text-xs bg-slate-950 border border-slate-700 rounded-lg text-emerald-300 font-mono mt-1"
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* 5. 파일 쓰기 노드 (File Write) */}
+          {subtype === 'file_write' && (
+            <div className="space-y-3.5">
+              <div>
+                <label className="text-[11px] text-slate-400 font-medium">
+                  {isEn ? 'File Path to Save' : '파일을 저장할 경로'} <span className="text-teal-400">*</span>
+                </label>
+                <div className="flex gap-1.5 mt-1">
+                  <input
+                    type="text"
+                    value={cfg.file_path || ''}
+                    onChange={(e) => handleConfigChange('file_path', e.target.value)}
+                    placeholder={isEn ? 'e.g. C:\\Temp\\result_{{date}}.txt' : '예: C:\\Temp\\result_{{date}}.txt'}
+                    className="flex-1 px-2.5 py-1.5 text-xs bg-slate-950 border border-slate-700 rounded-lg text-slate-200 font-mono focus:outline-none focus:border-teal-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => handleBrowseFileForKey('file_path', '.txt,.csv,.json,.md,.log,*')}
+                    className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs flex items-center gap-1 shrink-0"
+                    title={isEn ? 'Browse File' : '파일 경로 선택'}
+                  >
+                    <FolderOpen className="w-3.5 h-3.5 text-teal-400" />
+                  </button>
+                </div>
+                <div className="text-[10px] text-slate-500 mt-1">
+                  {isEn
+                    ? 'Supports {{variable}}, {{timestamp}}, {{date}}, {{time}}.'
+                    : '{{변수명}}, {{timestamp}}, {{date}}, {{time}} 치환을 지원합니다.'}
+                </div>
+              </div>
+
+              <div>
+                <label className="text-[11px] text-slate-400 font-medium">
+                  {isEn ? 'Content to Write' : '파일에 쓸 입력값 (텍스트 또는 변수)'}
+                </label>
+                <textarea
+                  rows={4}
+                  value={cfg.content ?? ''}
+                  onChange={(e) => handleConfigChange('content', e.target.value)}
+                  placeholder={isEn ? 'Enter text or {{variable}} to save...' : '직접 텍스트를 입력하거나 {{last_output}}, {{변수명}}을 입력하세요.'}
+                  className="w-full px-2.5 py-1.5 text-xs bg-slate-950 border border-slate-700 rounded-lg text-slate-200 mt-1 focus:outline-none focus:border-teal-500"
+                />
+              </div>
+
+              {/* 덮어쓰기 여부 체크박스 */}
+              <div className="p-3 bg-slate-950 rounded-xl border border-slate-800 space-y-2">
+                <label className="flex items-start gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(cfg.overwrite)}
+                    onChange={(e) => handleConfigChange('overwrite', e.target.checked)}
+                    className="mt-0.5 rounded bg-slate-900 border-slate-700 text-teal-600 focus:ring-0 w-3.5 h-3.5 cursor-pointer"
+                  />
+                  <span className="text-xs font-medium text-slate-200">
+                    {isEn ? 'Allow Overwrite Existing File' : '기존 파일 덮어쓰기 허용 (Overwrite)'}
+                  </span>
+                </label>
+                <div className={`text-[10px] leading-relaxed pl-5.5 ${cfg.overwrite ? 'text-teal-300/90' : 'text-amber-300/90'}`}>
+                  {cfg.overwrite
+                    ? (isEn
+                        ? '✔ Overwrites the file if it already exists at the target path.'
+                        : '✔ 지정한 경로에 파일이 이미 존재하면 새로운 내용으로 덮어씁니다.')
+                    : (isEn
+                        ? '⚠️ When unchecked, if the file already exists, an error (FileExistsError) is raised and the workflow stops safely.'
+                        : '⚠️ 선택 해제 상태에서는 동일한 경로에 파일이 이미 존재할 경우 오류(ERROR)를 발생시켜 덮어쓰기를 방지하고 워크플로우를 중단합니다.')}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* 6. 사용자 대화상자 출력 노드 (User Message Box) */}
+          {subtype === 'message_box' && (
+            <div className="space-y-3.5">
+              {/* 1) 타이틀 */}
+              <div>
+                <label className="text-[11px] text-slate-400 font-medium">
+                  {isEn ? 'Dialog Title' : '대화상자 타이틀'}
+                </label>
+                <input
+                  type="text"
+                  value={cfg.title ?? '알림'}
+                  onChange={(e) => handleConfigChange('title', e.target.value)}
+                  placeholder={isEn ? 'e.g. Notice, Confirmation' : '예: 알림, 작업 확인'}
+                  className="w-full px-2.5 py-1.5 text-xs bg-slate-950 border border-slate-700 rounded-lg text-slate-200 mt-1 focus:outline-none focus:border-amber-500"
+                />
+              </div>
+
+              {/* 2) 메시지 유형 (정보 / 경고 / 오류) */}
+              <div>
+                <label className="text-[11px] text-slate-400 font-medium block mb-1">
+                  {isEn ? 'Message Type (Icon)' : '메시지 유형'}
+                </label>
+                <div className="grid grid-cols-3 gap-1.5 p-1 bg-slate-950 rounded-lg border border-slate-800">
+                  <button
+                    type="button"
+                    onClick={() => handleConfigChange('message_type', 'info')}
+                    className={`py-1.5 text-xs rounded-md font-medium transition-all ${
+                      (cfg.message_type || 'info') === 'info'
+                        ? 'bg-blue-600 text-white shadow-sm'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    ℹ️ {isEn ? 'Info' : '정보'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleConfigChange('message_type', 'warning')}
+                    className={`py-1.5 text-xs rounded-md font-medium transition-all ${
+                      cfg.message_type === 'warning'
+                        ? 'bg-amber-600 text-white shadow-sm'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    ⚠️ {isEn ? 'Warning' : '경고'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleConfigChange('message_type', 'error')}
+                    className={`py-1.5 text-xs rounded-md font-medium transition-all ${
+                      cfg.message_type === 'error'
+                        ? 'bg-rose-600 text-white shadow-sm'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    🚨 {isEn ? 'Error' : '오류'}
+                  </button>
+                </div>
+              </div>
+
+              {/* 3) 메시지 본문 */}
+              <div>
+                <label className="text-[11px] text-slate-400 font-medium">
+                  {isEn ? 'Message Body' : '메시지 본문'}
+                </label>
+                <textarea
+                  rows={3}
+                  value={cfg.message ?? ''}
+                  onChange={(e) => handleConfigChange('message', e.target.value)}
+                  placeholder={isEn ? 'Enter message body ({{variable}} supported)...' : '대화상자에 표시할 본문을 입력하세요. ({{변수명}} 치환 가능)'}
+                  className="w-full px-2.5 py-1.5 text-xs bg-slate-950 border border-slate-700 rounded-lg text-slate-200 mt-1 focus:outline-none focus:border-amber-500"
+                />
+              </div>
+
+              {/* 4) 버튼 유형 (확인만 / 예·아니오 / 계속·중지) */}
+              <div>
+                <label className="text-[11px] text-slate-400 font-medium block mb-1">
+                  {isEn ? 'Button Type & Action' : '버튼 유형'}
+                </label>
+                <select
+                  value={cfg.button_type || 'ok'}
+                  onChange={(e) => handleConfigChange('button_type', e.target.value)}
+                  className="w-full px-2.5 py-1.5 text-xs bg-slate-950 border border-slate-700 rounded-lg text-slate-200 focus:outline-none focus:border-amber-500"
+                >
+                  <option value="ok">{isEn ? 'OK Only (Confirm)' : "'확인' 버튼만 (단순 알림)"}</option>
+                  <option value="yes_no">{isEn ? 'Yes / No (Save True/False to variable)' : "'예 / 아니오' (True / False 변수 저장)"}</option>
+                  <option value="continue_stop">{isEn ? 'Continue / Stop (Stop aborts workflow)' : "'계속 / 중지' ('중지' 클릭 시 워크플로우 즉시 종료)"}</option>
+                </select>
+              </div>
+
+              {/* 예/아니오 선택 시: boolean 결과 저장 변수명 */}
+              {cfg.button_type === 'yes_no' && (
+                <div>
+                  <label className="text-[11px] text-slate-400 font-medium">
+                    {isEn ? 'Boolean Output Variable Name' : '선택 결과(True/False) 저장 변수명'}
+                  </label>
+                  <input
+                    type="text"
+                    value={cfg.output_variable || 'dialog_result'}
+                    onChange={(e) => handleConfigChange('output_variable', e.target.value)}
+                    placeholder="dialog_result"
+                    className="w-full px-2.5 py-1.5 text-xs bg-slate-950 border border-slate-700 rounded-lg text-amber-300 font-mono mt-1"
+                  />
+                </div>
+              )}
+
+              {/* 버튼 유형별 상세 동작 안내 */}
+              <div className="p-2.5 bg-slate-950 border border-slate-800 rounded-xl text-[10px] text-slate-300 leading-relaxed">
+                {(cfg.button_type || 'ok') === 'ok' && (
+                  <span>
+                    💡 {isEn
+                      ? 'Displays a single [OK] button on top of all windows. Clicking [OK] completes this node normally.'
+                      : '화면 최상단에 단 하나의 [확인] 버튼을 출력하며, 사용자가 확인을 누르면 정상 실행 완료로 처리되어 다음 노드로 넘어갑니다.'}
+                  </span>
+                )}
+                {cfg.button_type === 'yes_no' && (
+                  <span>
+                    💡 {isEn
+                      ? `Saves boolean True ([Yes]) or False ([No]) into {{${cfg.output_variable || 'dialog_result'}}}.`
+                      : `사용자가 [예]를 누르면 True, [아니오]를 누르면 False(boolean) 값을 {{${cfg.output_variable || 'dialog_result'}}} 변수에 저장합니다.`}
+                  </span>
+                )}
+                {cfg.button_type === 'continue_stop' && (
+                  <span className="text-amber-300/90">
+                    ⚡ {isEn
+                      ? 'Clicking [Continue] proceeds to the next node. Clicking [Stop] raises an error to terminate the workflow immediately.'
+                      : '사용자가 [계속] 버튼을 누르면 후속 노드 실행을 이어가고, [중지] 버튼을 누르면 즉시 오류를 발생시켜 그 시점에서 워크플로우가 종료됩니다.'}
+                  </span>
+                )}
               </div>
             </div>
           )}

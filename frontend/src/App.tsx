@@ -156,10 +156,12 @@ export function App() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isPickerOpen, setIsPickerOpen] = useState(false);
   const [pickingNodeId, setPickingNodeId] = useState<string | null>(null);
+  const pickingTargetFieldRef = React.useRef<string>('object_data');
 
   // 오브젝트 선택기 오픈/확인/취소 핸들러
-  const handleOpenObjectPicker = (nodeId: string) => {
+  const handleOpenObjectPicker = (nodeId: string, targetField?: string | any) => {
     setPickingNodeId(nodeId);
+    pickingTargetFieldRef.current = typeof targetField === 'string' ? targetField : 'object_data';
     if (window.electronAPI?.startObjectPicker) {
       window.electronAPI.startObjectPicker(nodeId);
       return;
@@ -197,7 +199,18 @@ export function App() {
               process_name: detectedProcess,
               object_data: objectData,
             };
+          } else if (nodeData.type === 'general_mouse_drag') {
+            const targetField = pickingTargetFieldRef.current === 'end_object_data' ? 'end_object_data' : 'start_object_data';
+            const modeKey = targetField === 'end_object_data' ? 'end_mode' : 'start_mode';
+            const confKey = targetField === 'end_object_data' ? 'end_confidence' : 'start_confidence';
+            updatedCfg = {
+              ...currentCfg,
+              [modeKey]: 'object',
+              [targetField]: objectData,
+              [confKey]: objectData.confidence ?? 0.8,
+            };
           } else if (
+            nodeData.type === 'general_mouse_scroll' ||
             nodeData.type === 'general_window_close' ||
             nodeData.type === 'general_window_activate' ||
             nodeData.type === 'general_window_maximize' ||
@@ -780,7 +793,7 @@ export function App() {
                 onUpdateNodeData={handleUpdateNodeData}
                 onDeleteNode={handleDeleteNode}
                 onClose={() => setSelectedNode(null)}
-                onOpenObjectPicker={() => handleOpenObjectPicker(selectedNode.id)}
+                onOpenObjectPicker={(targetField?: string) => handleOpenObjectPicker(selectedNode.id, targetField)}
               />
             )}
           </div>

@@ -122,6 +122,14 @@ export const ko = {
       label: '마우스 이동',
       desc: '지정 좌표로 커서 부드럽게/즉시 이동',
     },
+    general_mouse_drag: {
+      label: '마우스 드래그 앤 드롭',
+      desc: '좌표/오브젝트 간 마우스 드래그 앤 드롭 (4가지 조합)',
+    },
+    general_mouse_scroll: {
+      label: '마우스 스크롤',
+      desc: 'UI 오브젝트 또는 현재 창 상하/좌우 스크롤 제어',
+    },
     general_keyboard_type: {
       label: '텍스트 입력',
       desc: '키보드 타이핑 및 한글 자모 순서 타이핑',
@@ -165,6 +173,22 @@ export const ko = {
     general_clipboard_copy: {
       label: '클립보드 복사',
       desc: '고정 텍스트 또는 이전 노드 출력값을 클립보드에 복사',
+    },
+    general_clipboard_read: {
+      label: '클립보드 읽기',
+      desc: '클립보드에 저장된 텍스트를 읽어 변수로 저장',
+    },
+    general_file_read: {
+      label: '텍스트 파일 읽기',
+      desc: '로컬 파일의 텍스트 내용을 읽어 변수로 저장',
+    },
+    general_file_write: {
+      label: '파일 쓰기',
+      desc: '텍스트 또는 변수 값을 로컬 파일로 저장 (덮어쓰기 옵션)',
+    },
+    general_message_box: {
+      label: '사용자 대화상자 출력',
+      desc: '최상단 팝업 알림창 출력 및 사용자 응답 분기/중지',
     },
     general_screenshot: {
       label: '화면 스크린샷',

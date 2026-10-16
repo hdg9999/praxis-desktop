@@ -124,6 +124,14 @@ export const en: TranslationType = {
       label: 'Mouse Move',
       desc: 'Move cursor smoothly or instantly to coordinate',
     },
+    general_mouse_drag: {
+      label: 'Mouse Drag & Drop',
+      desc: 'Drag and drop between coordinates and UI objects (4 combinations)',
+    },
+    general_mouse_scroll: {
+      label: 'Mouse Scroll',
+      desc: 'Vertical/horizontal scroll on UI object or current active window',
+    },
     general_keyboard_type: {
       label: 'Text Type',
       desc: 'Keyboard typing and sequential character input',
@@ -167,6 +175,22 @@ export const en: TranslationType = {
     general_clipboard_copy: {
       label: 'Clipboard Copy',
       desc: 'Copy static text or previous output variable to clipboard',
+    },
+    general_clipboard_read: {
+      label: 'Clipboard Read',
+      desc: 'Read text from clipboard and store into a variable',
+    },
+    general_file_read: {
+      label: 'Read Text File',
+      desc: 'Read text content from a local file into a variable',
+    },
+    general_file_write: {
+      label: 'Write File',
+      desc: 'Save text or variable value to a local file (with overwrite option)',
+    },
+    general_message_box: {
+      label: 'User Message Box',
+      desc: 'Show topmost popup dialog and capture user choice or stop workflow',
     },
     general_screenshot: {
       label: 'Take Screenshot',

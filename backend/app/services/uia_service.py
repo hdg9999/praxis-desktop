@@ -1363,5 +1363,450 @@ class UIAService:
             "formatted_text": "UI 요소 스캔 실패"
         }
 
+    def send_mouse_wheel(
+        self,
+        direction: str = "vertical",
+        signed_ticks: int = -5,
+        x: Optional[int] = None,
+        y: Optional[int] = None
+    ) -> None:
+        """
+        Win32 mouse_event를 통해 물리 마우스 휠(상하 MOUSEEVENTF_WHEEL / 좌우 MOUSEEVENTF_HWHEEL) 신호를 전송합니다.
+        - vertical: signed_ticks > 0 (위로/앞으로), signed_ticks < 0 (아래로/뒤로)
+        - horizontal: signed_ticks > 0 (오른쪽으로/뒤로), signed_ticks < 0 (왼쪽으로/앞으로)
+        """
+        import pyautogui
+        user32 = ctypes.windll.user32
+        MOUSEEVENTF_WHEEL = 0x0800
+        MOUSEEVENTF_HWHEEL = 0x01000
+        WHEEL_DELTA = 120
+
+        if x is not None and y is not None:
+            try:
+                pyautogui.moveTo(int(x), int(y))
+            except Exception:
+                pass
+
+        if signed_ticks == 0:
+            return
+
+        flag = MOUSEEVENTF_HWHEEL if direction == "horizontal" else MOUSEEVENTF_WHEEL
+        # 한 번에 너무 큰 delta를 보내면 일부 앱에서 무시할 수 있으므로 최대 5틱 단위로 분할 전송
+        remaining = int(signed_ticks)
+        step_sign = 1 if remaining > 0 else -1
+        remaining_abs = abs(remaining)
+
+        while remaining_abs > 0:
+            chunk = min(5, remaining_abs)
+            delta = step_sign * chunk * WHEEL_DELTA
+            try:
+                user32.mouse_event(flag, 0, 0, ctypes.c_ulong(delta & 0xFFFFFFFF).value, 0)
+            except Exception:
+                if direction == "vertical":
+                    pyautogui.scroll(step_sign * chunk)
+                else:
+                    try:
+                        pyautogui.hscroll(step_sign * chunk)
+                    except Exception:
+                        pass
+            remaining_abs -= chunk
+            if remaining_abs > 0:
+                time.sleep(0.015)
+
+    def _capture_region_signature(self, rect_tuple: Tuple[int, int, int, int]) -> Optional[bytes]:
+        """
+        지정 영역 (left, top, right, bottom)의 축소 그레이스케일 픽셀 시그니처를 캡처하여
+        스크롤 전후 화면 변화(처음/끝 도달 여부 및 스크롤 작동 여부)를 비-AI 방식으로 판별합니다.
+        """
+        try:
+            left, top, right, bottom = rect_tuple
+            w = max(0, right - left)
+            h = max(0, bottom - top)
+            if w < 10 or h < 10:
+                return None
+            with mss.mss() as sct:
+                raw = sct.grab({"left": int(left), "top": int(top), "width": int(w), "height": int(h)})
+                img = Image.frombytes("RGB", raw.size, raw.bgra, "raw", "BGRX").convert("L")
+                img_small = img.resize((32, 32))
+                return img_small.tobytes()
+        except Exception:
+            return None
+
+    def _regions_differ(self, sig1: Optional[bytes], sig2: Optional[bytes]) -> bool:
+        """두 영역 시그니처 간 유의미한 픽셀 변화가 발생했는지 검사"""
+        if not sig1 or not sig2 or len(sig1) != len(sig2):
+            return False
+        diff_sum = sum(abs(a - b) for a, b in zip(sig1, sig2))
+        mean_diff = diff_sum / len(sig1)
+        return mean_diff > 0.8
+
+    def scroll_target_element(
+        self,
+        target_x: int,
+        target_y: int,
+        object_data: Optional[Dict[str, Any]] = None,
+        direction: str = "vertical",
+        distance_mode: str = "ticks",
+        ticks: int = 5,
+        ticks_direction: str = "backward"
+    ) -> Dict[str, Any]:
+        """
+        오브젝트 선택 모드 전용 비-키보드(Non-Keyboard), 비-AI(Non-AI) 정밀 스크롤 엔진.
+        1. 대상 UI 오브젝트에 포커스(SetFocus 및 마우스 커서 이동) 부여
+        2. 다중 하위 스크롤바 환경에서 해당 요소가 속한 가장 가까운 스크롤 컨테이너 탐색
+        3. 단축키 입력 없이 UIA ScrollPattern ➔ Win32 WM_VSCROLL/WM_HSCROLL ➔ 하드웨어 마우스 휠 순으로 제어
+        4. 스크롤 존재 여부 및 처음(0%)/끝(100%) 도달 상태를 감지하여 반환
+        """
+        import pyautogui
+
+        def _scroll_worker() -> Dict[str, Any]:
+            user32 = ctypes.windll.user32
+            cx, cy = int(target_x), int(target_y)
+
+            # 1. 마우스 커서를 대상 오브젝트 중심 좌표로 이동
+            try:
+                pyautogui.moveTo(cx, cy)
+            except Exception:
+                pass
+
+            ctrl = None
+            scroll_container = None
+            scroll_pattern = None
+            container_hwnd = None
+            container_rect = (max(0, cx - 200), max(0, cy - 200), cx + 200, cy + 200)
+
+            if UIA_AVAILABLE and auto is not None:
+                try:
+                    ctrl = auto.ControlFromPoint(cx, cy)
+                except Exception:
+                    ctrl = None
+
+            # 2. 상위 창 활성화 및 대상 UI 오브젝트에 Focus 부여
+            if ctrl:
+                try:
+                    top_win = ctrl.GetTopLevelControl()
+                    if top_win and top_win.NativeWindowHandle:
+                        fg_hwnd = user32.GetForegroundWindow()
+                        if fg_hwnd != int(top_win.NativeWindowHandle):
+                            self.activate_window(int(top_win.NativeWindowHandle))
+                            pyautogui.moveTo(cx, cy)
+                except Exception:
+                    pass
+
+                try:
+                    ctrl.SetFocus()
+                except Exception:
+                    pass
+
+                # 3. 다중 하위 스크롤 컨테이너 탐색 (자신 ➔ 자식 ➔ 부모 순회)
+                candidates = [ctrl]
+                try:
+                    for ch in ctrl.GetChildren():
+                        r = ch.BoundingRectangle
+                        if r and r.left <= cx <= r.right and r.top <= cy <= r.bottom:
+                            candidates.append(ch)
+                except Exception:
+                    pass
+
+                curr_p = ctrl
+                for _ in range(8):
+                    try:
+                        parent = curr_p.GetParentControl()
+                        if not parent or parent.ControlType == auto.ControlType.PaneControl and parent == auto.GetRootControl():
+                            break
+                        candidates.append(parent)
+                        curr_p = parent
+                    except Exception:
+                        break
+
+                for cand in candidates:
+                    try:
+                        sp = cand.GetScrollPattern()
+                        if sp:
+                            is_scrollable = (
+                                bool(getattr(sp, "VerticallyScrollable", False))
+                                if direction == "vertical"
+                                else bool(getattr(sp, "HorizontallyScrollable", False))
+                            )
+                            view_size = (
+                                float(getattr(sp, "VerticalViewSize", 100.0))
+                                if direction == "vertical"
+                                else float(getattr(sp, "HorizontalViewSize", 100.0))
+                            )
+                            if is_scrollable or view_size < 100.0:
+                                scroll_container = cand
+                                scroll_pattern = sp
+                                break
+                            if scroll_pattern is None:
+                                scroll_container = cand
+                                scroll_pattern = sp
+                    except Exception:
+                        continue
+
+                target_for_rect = scroll_container or ctrl
+                try:
+                    r = target_for_rect.BoundingRectangle
+                    if r and r.width() > 10 and r.height() > 10:
+                        container_rect = (int(r.left), int(r.top), int(r.right), int(r.bottom))
+                except Exception:
+                    pass
+
+                try:
+                    h = getattr(target_for_rect, "NativeWindowHandle", 0)
+                    if not h and ctrl:
+                        h = getattr(ctrl, "NativeWindowHandle", 0)
+                    if h:
+                        container_hwnd = int(h)
+                except Exception:
+                    pass
+
+            if not container_hwnd:
+                try:
+                    pt = wintypes.POINT(cx, cy)
+                    h_pt = user32.WindowFromPoint(pt)
+                    if h_pt:
+                        container_hwnd = int(h_pt)
+                except Exception:
+                    pass
+
+            # 헬퍼: 현재 UIA 스크롤 퍼센트 조회 (0.0 ~ 100.0, 미지원 시 None)
+            def _get_scroll_pct() -> Optional[float]:
+                if not scroll_pattern:
+                    return None
+                try:
+                    val = (
+                        getattr(scroll_pattern, "VerticalScrollPercent", -1.0)
+                        if direction == "vertical"
+                        else getattr(scroll_pattern, "HorizontalScrollPercent", -1.0)
+                    )
+                    val_f = float(val)
+                    if 0.0 <= val_f <= 100.0:
+                        return val_f
+                except Exception:
+                    pass
+                return None
+
+            before_pct = _get_scroll_pct()
+            before_sig = self._capture_region_signature(container_rect)
+            method_used = "Wheel"
+
+            # Win32 메시지 상수
+            WM_HSCROLL = 0x0114
+            WM_VSCROLL = 0x0115
+            wm_msg = WM_HSCROLL if direction == "horizontal" else WM_VSCROLL
+            SB_LINEUP = 0      # 위로 / 왼쪽으로 1줄
+            SB_LINEDOWN = 1    # 아래로 / 오른쪽으로 1줄
+            SB_PAGEUP = 2      # 한 페이지 앞으로 (PageUp / PageLeft)
+            SB_PAGEDOWN = 3    # 한 페이지 뒤로 (PageDown / PageRight)
+            SB_TOP = 6         # 맨 처음 (Home / Left)
+            SB_BOTTOM = 7      # 맨 끝 (End / Right)
+
+            # UIA ScrollAmount 상수 (0: LargeDecrement, 1: SmallDecrement, 2: NoAmount, 3: LargeIncrement, 4: SmallIncrement)
+            UIA_LargeDecrement = getattr(auto.ScrollAmount, "LargeDecrement", 0) if auto else 0
+            UIA_SmallDecrement = getattr(auto.ScrollAmount, "SmallDecrement", 1) if auto else 1
+            UIA_NoAmount = getattr(auto.ScrollAmount, "NoAmount", 2) if auto else 2
+            UIA_LargeIncrement = getattr(auto.ScrollAmount, "LargeIncrement", 3) if auto else 3
+            UIA_SmallIncrement = getattr(auto.ScrollAmount, "SmallIncrement", 4) if auto else 4
+
+            def _uia_scroll_step(amount_const: int) -> bool:
+                if not scroll_pattern:
+                    return False
+                try:
+                    if direction == "vertical":
+                        scroll_pattern.Scroll(UIA_NoAmount, amount_const)
+                    else:
+                        scroll_pattern.Scroll(amount_const, UIA_NoAmount)
+                    return True
+                except Exception:
+                    return False
+
+            def _uia_set_percent(target_pct: float) -> bool:
+                if not scroll_pattern:
+                    return False
+                try:
+                    if direction == "vertical":
+                        scroll_pattern.SetScrollPercent(-1.0, float(target_pct))
+                    else:
+                        scroll_pattern.SetScrollPercent(float(target_pct), -1.0)
+                    return True
+                except Exception:
+                    return False
+
+            # 뷰포트 크기 비례 1페이지 휠 틱 수 산출
+            rect_w = max(100, container_rect[2] - container_rect[0])
+            rect_h = max(100, container_rect[3] - container_rect[1])
+            page_ticks = max(3, min(12, round((rect_h if direction == "vertical" else rect_w) / 90)))
+
+            # 4. 거리 모드별 비-키보드 스크롤 실행
+            if distance_mode == "ticks":
+                abs_ticks = max(1, abs(int(ticks)))
+                # backward: 아래로(vertical: 음수 휠) / 오른쪽으로(horizontal: 양수 휠)
+                # forward: 위로(vertical: 양수 휠) / 왼쪽으로(horizontal: 음수 휠)
+                is_backward = (int(ticks) < 0) or (int(ticks) > 0 and ticks_direction != "forward")
+                if direction == "vertical":
+                    wheel_ticks = -abs_ticks if is_backward else abs_ticks
+                else:
+                    wheel_ticks = abs_ticks if is_backward else -abs_ticks
+
+                self.send_mouse_wheel(direction=direction, signed_ticks=wheel_ticks, x=cx, y=cy)
+                time.sleep(0.06)
+                after_sig_temp = self._capture_region_signature(container_rect)
+                after_pct_temp = _get_scroll_pct()
+
+                # 만약 하드웨어 휠로 변화가 없고 UIA ScrollPattern 또는 Win32 핸들이 있으면 보조 실행
+                moved_by_wheel = (
+                    (before_pct is not None and after_pct_temp is not None and abs(after_pct_temp - before_pct) > 0.05)
+                    or self._regions_differ(before_sig, after_sig_temp)
+                )
+                if not moved_by_wheel:
+                    uia_amt = UIA_SmallIncrement if is_backward else UIA_SmallDecrement
+                    if scroll_pattern:
+                        for _ in range(min(abs_ticks, 10)):
+                            if _uia_scroll_step(uia_amt):
+                                method_used = "UIA ScrollPattern (Ticks)"
+                    elif container_hwnd:
+                        sb_cmd = SB_LINEDOWN if is_backward else SB_LINEUP
+                        for _ in range(min(abs_ticks, 10)):
+                            user32.SendMessageW(container_hwnd, wm_msg, sb_cmd, 0)
+                        method_used = "Win32 ScrollMessage (Ticks)"
+
+            elif distance_mode in ("page_down", "page_up"):
+                is_down = (distance_mode == "page_down")
+                uia_amt = UIA_LargeIncrement if is_down else UIA_LargeDecrement
+                sb_cmd = SB_PAGEDOWN if is_down else SB_PAGEUP
+
+                # 1순위: UIA ScrollPattern (LargeIncrement / LargeDecrement)
+                used_uia = _uia_scroll_step(uia_amt)
+                if used_uia:
+                    time.sleep(0.06)
+                    method_used = "UIA ScrollPattern (Page)"
+
+                mid_pct = _get_scroll_pct()
+                mid_sig = self._capture_region_signature(container_rect)
+                moved = (
+                    (before_pct is not None and mid_pct is not None and abs(mid_pct - before_pct) > 0.05)
+                    or self._regions_differ(before_sig, mid_sig)
+                )
+
+                # 2순위: Win32 WM_VSCROLL / WM_HSCROLL (SB_PAGEDOWN / SB_PAGEUP)
+                if not moved and container_hwnd:
+                    user32.SendMessageW(container_hwnd, wm_msg, sb_cmd, 0)
+                    time.sleep(0.06)
+                    mid_pct = _get_scroll_pct()
+                    mid_sig = self._capture_region_signature(container_rect)
+                    moved = (
+                        (before_pct is not None and mid_pct is not None and abs(mid_pct - before_pct) > 0.05)
+                        or self._regions_differ(before_sig, mid_sig)
+                    )
+                    if moved:
+                        method_used = "Win32 WM_SCROLL (Page)"
+
+                # 3순위: 뷰포트 크기 비례 물리 마우스 휠
+                if not moved:
+                    if direction == "vertical":
+                        wheel_ticks = -page_ticks if is_down else page_ticks
+                    else:
+                        wheel_ticks = page_ticks if is_down else -page_ticks
+                    self.send_mouse_wheel(direction=direction, signed_ticks=wheel_ticks, x=cx, y=cy)
+                    time.sleep(0.06)
+                    method_used = "Viewport Mouse Wheel (Page)"
+
+            elif distance_mode in ("end", "home"):
+                is_end = (distance_mode == "end")
+                target_pct = 100.0 if is_end else 0.0
+                sb_cmd = SB_BOTTOM if is_end else SB_TOP
+                uia_amt = UIA_LargeIncrement if is_end else UIA_LargeDecrement
+
+                # 1순위: UIA SetScrollPercent(100.0 / 0.0)
+                if _uia_set_percent(target_pct):
+                    time.sleep(0.08)
+                    method_used = "UIA SetScrollPercent"
+
+                curr_pct = _get_scroll_pct()
+                reached = (
+                    (curr_pct is not None and ((is_end and curr_pct >= 99.5) or (not is_end and curr_pct <= 0.5)))
+                )
+
+                # 2순위: Win32 SB_BOTTOM / SB_TOP
+                if not reached and container_hwnd:
+                    user32.SendMessageW(container_hwnd, wm_msg, sb_cmd, 0)
+                    time.sleep(0.06)
+                    curr_pct = _get_scroll_pct()
+                    if curr_pct is not None and ((is_end and curr_pct >= 99.5) or (not is_end and curr_pct <= 0.5)):
+                        reached = True
+                        method_used = "Win32 SB_TOP/BOTTOM"
+
+                # 3순위: 경계(처음/끝) 도달 시까지 연속 페이지/휠 스크롤 루프 (변화량 0 감지)
+                if not reached:
+                    prev_sig = self._capture_region_signature(container_rect)
+                    prev_pct = _get_scroll_pct()
+                    for _ in range(25):
+                        step_ok = _uia_scroll_step(uia_amt)
+                        if not step_ok:
+                            if direction == "vertical":
+                                w_ticks = -(page_ticks * 2) if is_end else (page_ticks * 2)
+                            else:
+                                w_ticks = (page_ticks * 2) if is_end else -(page_ticks * 2)
+                            self.send_mouse_wheel(direction=direction, signed_ticks=w_ticks, x=cx, y=cy)
+                        time.sleep(0.05)
+
+                        now_pct = _get_scroll_pct()
+                        now_sig = self._capture_region_signature(container_rect)
+
+                        if now_pct is not None:
+                            if (is_end and now_pct >= 99.5) or (not is_end and now_pct <= 0.5):
+                                method_used = "Boundary Loop (UIA Percent)"
+                                break
+                            if prev_pct is not None and abs(now_pct - prev_pct) < 0.05:
+                                break
+                        elif not self._regions_differ(prev_sig, now_sig):
+                            # 더 이상 화면 픽셀이 변하지 않으면 처음/끝 도달 완료
+                            method_used = "Boundary Loop (Pixel Delta)"
+                            break
+
+                        prev_sig = now_sig
+                        prev_pct = now_pct
+
+            after_pct = _get_scroll_pct()
+            after_sig = self._capture_region_signature(container_rect)
+            visual_changed = self._regions_differ(before_sig, after_sig)
+            pct_changed = (
+                before_pct is not None and after_pct is not None and abs(after_pct - before_pct) > 0.05
+            )
+            scroll_detected = bool(scroll_pattern is not None or visual_changed or pct_changed)
+
+            at_start = False
+            at_end = False
+            if after_pct is not None:
+                at_start = after_pct <= 0.5
+                at_end = after_pct >= 99.5
+            else:
+                if distance_mode == "home" or (distance_mode == "page_up" and not visual_changed):
+                    at_start = not visual_changed or distance_mode == "home"
+                if distance_mode == "end" or (distance_mode == "page_down" and not visual_changed):
+                    at_end = not visual_changed or distance_mode == "end"
+
+            return {
+                "success": True,
+                "method_used": method_used,
+                "scroll_detected": scroll_detected,
+                "before_percent": before_pct,
+                "after_percent": after_pct,
+                "visual_changed": visual_changed,
+                "at_start": at_start,
+                "at_end": at_end,
+                "coords": (cx, cy),
+            }
+
+        return run_in_desktop_thread(_scroll_worker) or {
+            "success": False,
+            "method_used": "None",
+            "scroll_detected": False,
+            "at_start": False,
+            "at_end": False,
+            "coords": (target_x, target_y),
+        }
+
 uia_service = UIAService()
+
 

@@ -303,6 +303,169 @@ AGENT_TOOLS: Dict[str, AgentToolDefinition] = {
             },
             "required": ["process_name"]
         }
+    ),
+    "mouse_drag": AgentToolDefinition(
+        name="mouse_drag",
+        display_name="마우스 드래그 앤 드롭",
+        description="시작 좌표 (start_x, start_y)에서 끝 좌표 (end_x, end_y)까지 마우스 버튼을 누른 채로 드래그하여 이동한 뒤 놓습니다.",
+        category="mouse",
+        parameters={
+            "type": "object",
+            "properties": {
+                "start_x": {"type": "integer", "description": "드래그 시작 X 좌표"},
+                "start_y": {"type": "integer", "description": "드래그 시작 Y 좌표"},
+                "end_x": {"type": "integer", "description": "드래그 끝(도착) X 좌표"},
+                "end_y": {"type": "integer", "description": "드래그 끝(도착) Y 좌표"},
+                "button": {
+                    "type": "string",
+                    "enum": ["left", "right", "middle"],
+                    "description": "마우스 버튼 종류 (기본값: left)"
+                },
+                "move_mode": {
+                    "type": "string",
+                    "enum": ["instant", "smooth"],
+                    "description": "이동 방식: instant(순간이동), smooth(부드러운 이동, 기본값)"
+                },
+                "duration": {
+                    "type": "number",
+                    "description": "smooth 모드일 때 드래그 이동 소요 시간(초, 기본값: 0.5)"
+                }
+            },
+            "required": ["start_x", "start_y", "end_x", "end_y"]
+        }
+    ),
+    "mouse_scroll": AgentToolDefinition(
+        name="mouse_scroll",
+        display_name="마우스 스크롤",
+        description="화면 또는 특정 좌표(x, y)의 UI 요소를 상하(vertical) 또는 좌우(horizontal) 방향으로 스크롤합니다. 휠 칸수(ticks), 한 페이지 뒤로(page_down), 한 페이지 앞으로(page_up), 맨 끝으로(end), 맨 처음으로(home) 이동을 지원합니다.",
+        category="mouse",
+        parameters={
+            "type": "object",
+            "properties": {
+                "direction": {
+                    "type": "string",
+                    "enum": ["vertical", "horizontal"],
+                    "description": "스크롤 방향: vertical(상하, 기본값), horizontal(좌우)"
+                },
+                "distance_mode": {
+                    "type": "string",
+                    "enum": ["ticks", "page_down", "page_up", "end", "home"],
+                    "description": "스크롤 거리 방식: ticks(휠 칸수), page_down(한페이지 뒤로), page_up(한페이지 앞으로), end(맨끝으로), home(맨처음으로)"
+                },
+                "ticks": {
+                    "type": "integer",
+                    "description": "distance_mode가 'ticks'일 때 이동할 마우스 휠 칸수 (기본값: 5)"
+                },
+                "ticks_direction": {
+                    "type": "string",
+                    "enum": ["backward", "forward"],
+                    "description": "휠 칸수 이동 시 세부 방향: backward(아래로/오른쪽으로, 기본값), forward(위로/왼쪽으로)"
+                },
+                "x": {
+                    "type": "integer",
+                    "description": "선택 사항: 스크롤할 대상 UI 요소의 X 좌표 (생략 시 현재 활성창 기준)"
+                },
+                "y": {
+                    "type": "integer",
+                    "description": "선택 사항: 스크롤할 대상 UI 요소의 Y 좌표 (생략 시 현재 활성창 기준)"
+                }
+            },
+            "required": []
+        }
+    ),
+    "clipboard_read": AgentToolDefinition(
+        name="clipboard_read",
+        display_name="클립보드 읽기",
+        description="현재 Windows 클립보드에 복사되어 있는 텍스트를 읽어 반환하고 컨텍스트 변수에 저장합니다.",
+        category="system",
+        parameters={
+            "type": "object",
+            "properties": {
+                "output_variable": {
+                    "type": "string",
+                    "description": "읽어온 클립보드 텍스트를 저장할 변수명 (기본값: 'clipboard_text')"
+                }
+            },
+            "required": []
+        }
+    ),
+    "file_read": AgentToolDefinition(
+        name="file_read",
+        display_name="텍스트 파일 읽기",
+        description="지정한 경로의 로컬 텍스트 파일(.txt, .md, .csv, .json 등) 내용을 읽어서 반환하고 변수에 저장합니다.",
+        category="system",
+        parameters={
+            "type": "object",
+            "properties": {
+                "file_path": {
+                    "type": "string",
+                    "description": "읽어올 텍스트 파일의 전체 경로"
+                },
+                "output_variable": {
+                    "type": "string",
+                    "description": "읽어온 파일 내용을 저장할 변수명 (기본값: 'file_content')"
+                }
+            },
+            "required": ["file_path"]
+        }
+    ),
+    "file_write": AgentToolDefinition(
+        name="file_write",
+        display_name="파일 쓰기",
+        description="지정한 텍스트 내용을 로컬 파일로 저장합니다. 덮어쓰기(overwrite)가 false일 때 이미 파일이 존재하면 오류를 반환합니다.",
+        category="system",
+        parameters={
+            "type": "object",
+            "properties": {
+                "file_path": {
+                    "type": "string",
+                    "description": "저장할 파일의 전체 경로"
+                },
+                "content": {
+                    "type": "string",
+                    "description": "파일에 기록할 텍스트 내용"
+                },
+                "overwrite": {
+                    "type": "boolean",
+                    "description": "동일한 이름의 파일이 이미 존재할 때 덮어쓸지 여부 (기본값: false)"
+                }
+            },
+            "required": ["file_path", "content"]
+        }
+    ),
+    "message_box": AgentToolDefinition(
+        name="message_box",
+        display_name="사용자 대화상자 출력",
+        description="화면 최상단에 팝업 대화상자(메시지 박스)를 출력하여 사용자에게 알림을 주거나 응답(확인, 예/아니오, 계속/중지)을 받습니다.",
+        category="system",
+        parameters={
+            "type": "object",
+            "properties": {
+                "title": {
+                    "type": "string",
+                    "description": "대화상자 상단 타이틀 제목 (기본값: '알림')"
+                },
+                "message": {
+                    "type": "string",
+                    "description": "대화상자 본문 메시지"
+                },
+                "message_type": {
+                    "type": "string",
+                    "enum": ["info", "warning", "error"],
+                    "description": "메시지 아이콘 유형: info(정보), warning(경고), error(오류)"
+                },
+                "button_type": {
+                    "type": "string",
+                    "enum": ["ok", "yes_no", "continue_stop"],
+                    "description": "버튼 유형: ok(확인만), yes_no(예/아니오 선택), continue_stop(계속/중지 선택)"
+                },
+                "output_variable": {
+                    "type": "string",
+                    "description": "yes_no 버튼 유형일 때 결과(True/False)를 저장할 변수명 (기본값: 'dialog_result')"
+                }
+            },
+            "required": ["message"]
+        }
     )
 }
 
@@ -314,6 +477,8 @@ PRESET_SKILLS = {
         "get_screen_elements",
         "mouse_click",
         "mouse_move",
+        "mouse_drag",
+        "mouse_scroll",
         "keyboard_type",
         "keyboard_hotkey",
         "window_activate",
@@ -625,9 +790,136 @@ async def execute_agent_tool(
                 return f"[성공] {msg}"
             return f"[실패] {msg}"
 
+        # 16. 마우스 드래그 앤 드롭
+        elif name == "mouse_drag":
+            sx = int(float(args.get("start_x", 0)))
+            sy = int(float(args.get("start_y", 0)))
+            ex = int(float(args.get("end_x", 0)))
+            ey = int(float(args.get("end_y", 0)))
+            btn = str(args.get("button", "left")).lower()
+            move_mode = str(args.get("move_mode", "smooth")).lower()
+            duration = max(0.0, float(args.get("duration", 0.5)))
+
+            pyautogui.moveTo(sx, sy, duration=0)
+            await asyncio.sleep(0.05)
+            pyautogui.mouseDown(x=sx, y=sy, button=btn)
+            try:
+                await asyncio.sleep(0.05)
+                if move_mode == "smooth" and duration > 0:
+                    pyautogui.moveTo(ex, ey, duration=duration)
+                else:
+                    pyautogui.moveTo(ex, ey, duration=0)
+                await asyncio.sleep(0.05)
+            finally:
+                pyautogui.mouseUp(x=ex, y=ey, button=btn)
+
+            return f"[성공] ({sx}, {sy})에서 ({ex}, {ey})로 마우스 드래그 앤 드롭을 완료했습니다."
+
+        # 17. 마우스 스크롤
+        elif name == "mouse_scroll":
+            direction = str(args.get("direction", "vertical")).lower()
+            distance_mode = str(args.get("distance_mode", "ticks")).lower()
+            ticks = int(float(args.get("ticks", 5)))
+            ticks_dir = str(args.get("ticks_direction", "backward")).lower()
+            x_arg = args.get("x")
+            y_arg = args.get("y")
+
+            if x_arg is not None and y_arg is not None:
+                tx, ty = int(float(x_arg)), int(float(y_arg))
+                res = uia_service.scroll_target_element(
+                    target_x=tx,
+                    target_y=ty,
+                    object_data=None,
+                    direction=direction,
+                    distance_mode=distance_mode,
+                    ticks=ticks,
+                    ticks_direction=ticks_dir
+                )
+                boundary = ""
+                if res.get("at_end"):
+                    boundary = " (맨 끝 도달)"
+                elif res.get("at_start"):
+                    boundary = " (맨 처음 도달)"
+                return f"[성공] ({tx}, {ty}) 위치에서 {direction} 스크롤({distance_mode}) 완료{boundary}"
+            else:
+                abs_ticks = max(1, abs(ticks))
+                is_backward = (ticks < 0) or (ticks > 0 and ticks_dir != "forward")
+                if direction == "vertical":
+                    signed_ticks = -abs_ticks if is_backward else abs_ticks
+                else:
+                    signed_ticks = abs_ticks if is_backward else -abs_ticks
+                uia_service.send_mouse_wheel(direction=direction, signed_ticks=signed_ticks, x=None, y=None)
+                return f"[성공] 현재 활성창에서 {direction} 방향으로 마우스 휠({signed_ticks}) 스크롤을 수행했습니다."
+
+        # 18. 클립보드 읽기
+        elif name == "clipboard_read":
+            out_var = str(args.get("output_variable", "clipboard_text")).strip() or "clipboard_text"
+            clip_text = pyperclip.paste() or ""
+            if context and hasattr(context, "variables") and isinstance(context.variables, dict):
+                context.variables[out_var] = str(clip_text)
+                context.variables["last_output"] = str(clip_text)
+            return f"[성공] 클립보드 텍스트 읽기 완료 (변수 '{out_var}' 저장): {clip_text}"
+
+        # 19. 텍스트 파일 읽기
+        elif name == "file_read":
+            f_path = str(args.get("file_path", "")).strip().strip('"').strip("'")
+            if not f_path:
+                return "[실패] file_path (읽어올 파일 경로)가 지정되지 않았습니다."
+            target = Path(f_path)
+            if not target.exists():
+                return f"[실패] 파일을 찾을 수 없습니다: '{target}'"
+            if target.is_dir():
+                return f"[실패] 지정한 경로는 디렉터리입니다: '{target}'"
+            try:
+                content = target.read_text(encoding="utf-8-sig")
+            except UnicodeDecodeError:
+                content = target.read_text(encoding="cp949", errors="replace")
+            out_var = str(args.get("output_variable", "file_content")).strip() or "file_content"
+            if context and hasattr(context, "variables") and isinstance(context.variables, dict):
+                context.variables[out_var] = content
+                context.variables["last_output"] = content
+            return f"[성공] 파일 읽기 완료 ('{target}', 변수 '{out_var}' 저장):\n{content}"
+
+        # 20. 파일 쓰기
+        elif name == "file_write":
+            f_path = str(args.get("file_path", "")).strip().strip('"').strip("'")
+            if not f_path:
+                return "[실패] file_path (저장할 파일 경로)가 지정되지 않았습니다."
+            content = str(args.get("content", ""))
+            overwrite = bool(args.get("overwrite", False))
+            target = Path(f_path)
+            if target.exists() and not overwrite:
+                return f"[실패] 파일이 이미 존재하며 덮어쓰기(overwrite)가 허용되지 않았습니다: '{target}'"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(content, encoding="utf-8")
+            return f"[성공] 파일 쓰기 완료: '{target}' ({len(content)}자 저장됨)"
+
+        # 21. 사용자 대화상자 출력
+        elif name == "message_box":
+            from app.nodes.general import show_topmost_message_box
+            title = str(args.get("title", "알림"))
+            message = str(args.get("message", ""))
+            msg_type = str(args.get("message_type", "info")).lower()
+            btn_type = str(args.get("button_type", "ok")).lower()
+            out_var = str(args.get("output_variable", "dialog_result")).strip() or "dialog_result"
+
+            ret = await asyncio.to_thread(show_topmost_message_box, title, message, msg_type, btn_type)
+            if btn_type == "yes_no":
+                is_yes = (ret == 6)
+                if context and hasattr(context, "variables") and isinstance(context.variables, dict):
+                    context.variables[out_var] = is_yes
+                    context.variables["last_output"] = is_yes
+                return f"[성공] 대화상자 응답: {'예(True)' if is_yes else '아니오(False)'} (변수 '{out_var}' = {is_yes})"
+            elif btn_type == "continue_stop":
+                if ret == 1:
+                    return "[성공] 사용자가 대화상자에서 '계속'을 선택했습니다."
+                return "[실패] 사용자가 대화상자에서 '중지'를 선택하여 작업을 중단했습니다."
+            return f"[성공] 사용자 대화상자('{title}') 확인 완료"
+
         else:
             return f"[오류] 미구현된 스킬입니다: '{name}'"
 
     except Exception as e:
         logger.error(f"[AgentToolDispatcher] Error executing '{name}': {e}", exc_info=True)
         return f"[오류 발생] {name} 실행 실패: {str(e)}"
+
