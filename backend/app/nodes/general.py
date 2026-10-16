@@ -14,23 +14,59 @@ from PIL import Image
 import pyautogui
 import pyperclip
 from app.core.config import settings
-from app.nodes.base import BaseNode, ExecutionContext, NodeResult
+from app.nodes.base import (
+    BaseNode,
+    ExecutionContext,
+    NodeResult,
+    format_variable_for_template,
+    SYSTEM_VARIABLE_NAMES,
+)
 from app.services.screen_capture import screen_capture_service, copy_image_to_clipboard
 from app.services.uia_service import uia_service
 
 # PyAutoGUI 안전 설정 (코너 이동 시 FailSafe 방지 대신 커스텀 킬 스위치 사용)
 pyautogui.FAILSAFE = False
 
-def render_template(template: str, variables: Dict[str, Any]) -> str:
-    """{{variable}} 형태의 플레이스홀더를 context 변수 값으로 치환"""
+
+def render_template(
+    template: str,
+    variables: Dict[str, Any],
+    strict: bool = False,
+    declared_names: Optional[set] = None,
+) -> str:
+    """{{variable}} 형태의 플레이스홀더를 context 변수 값으로 안전하게 치환 (이종 언어 타입 정규화 지원)"""
+    if template is None:
+        return ""
     if not isinstance(template, str):
-        return str(template)
-    
+        return format_variable_for_template(template)
+
+    now = datetime.now()
+    builtin_dynamic = {
+        "timestamp": now.strftime("%Y%m%d_%H%M%S"),
+        "date": now.strftime("%Y%m%d"),
+        "time": now.strftime("%H%M%S"),
+        "last_output": "",
+        "scroll_at_start": False,
+        "scroll_at_end": False,
+    }
+
     def replacer(match):
         key = match.group(1).strip()
-        return str(variables.get(key, match.group(0)))
+        if key in variables:
+            return format_variable_for_template(variables[key])
+        if key in builtin_dynamic:
+            return format_variable_for_template(builtin_dynamic[key])
+        if strict:
+            if declared_names is not None and key in declared_names:
+                return ""
+            raise ValueError(
+                f"선언되지 않은 변수 '{{{{{key}}}}}'가 참조되었습니다. "
+                f"하단 '워크플로우 변수 관리' 패널에서 변수를 먼저 선언해 주세요."
+            )
+        return match.group(0)
 
     return re.sub(r"\{\{([^}]+)\}\}", replacer, template)
+
 
 # 한글 유니코드 및 2벌식 키보드 변환 테이블
 HANGUL_BASE = 0xAC00
@@ -896,15 +932,18 @@ class GeneralNode(BaseNode):
             return f"마우스 드래그 앤 드롭 완료: {start_desc} ➔ {end_desc} (방식: {move_label}, 버튼: {button})"
 
         elif subtype == "clipboard_read":
-            output_var = str(self.config.get("output_variable", "clipboard_text")).strip() or "clipboard_text"
+            raw_out = self.config.get("output_variable")
+            output_var = str(raw_out).strip() if raw_out is not None else ""
+            if not output_var and not context.strict_variables:
+                output_var = "clipboard_text"
             clip_text = pyperclip.paste()
             if clip_text is None:
                 clip_text = ""
             else:
                 clip_text = str(clip_text)
 
-            context.variables[output_var] = clip_text
-            context.variables["last_output"] = clip_text
+            context.set_variable(output_var, clip_text)
+            context.set_variable("last_output", clip_text, is_system=True)
 
             preview = clip_text[:50] + ("..." if len(clip_text) > 50 else "")
             return f"클립보드 읽기 성공 (변수 '{{{{{output_var}}}}}'에 {len(clip_text)}자 저장): {preview}"
@@ -931,9 +970,12 @@ class GeneralNode(BaseNode):
                 except Exception:
                     text_content = target_path.read_text(encoding="utf-8", errors="replace")
 
-            output_var = str(self.config.get("output_variable", "file_content")).strip() or "file_content"
-            context.variables[output_var] = text_content
-            context.variables["last_output"] = text_content
+            raw_out = self.config.get("output_variable")
+            output_var = str(raw_out).strip() if raw_out is not None else ""
+            if not output_var and not context.strict_variables:
+                output_var = "file_content"
+            context.set_variable(output_var, text_content)
+            context.set_variable("last_output", text_content, is_system=True)
 
             preview = text_content[:50].replace("\n", " ") + ("..." if len(text_content) > 50 else "")
             return f"텍스트 파일 읽기 성공 ('{target_path}', 변수 '{{{{{output_var}}}}}'에 {len(text_content)}자 저장): {preview}"
@@ -975,7 +1017,10 @@ class GeneralNode(BaseNode):
             raw_message = self.config.get("message", "")
             message_type = str(self.config.get("message_type", "info")).lower()    # info | warning | error
             button_type = str(self.config.get("button_type", "ok")).lower()        # ok | yes_no | continue_stop
-            output_var = str(self.config.get("output_variable", "dialog_result")).strip() or "dialog_result"
+            raw_out = self.config.get("output_variable")
+            output_var = str(raw_out).strip() if raw_out is not None else ""
+            if not output_var and not context.strict_variables:
+                output_var = "dialog_result"
 
             resolved_title = render_template(str(raw_title), context.variables)
             resolved_message = render_template(str(raw_message), context.variables)
@@ -991,8 +1036,8 @@ class GeneralNode(BaseNode):
             if button_type == "yes_no":
                 # IDYES = 6, IDNO = 7
                 is_yes = (ret_code == 6)
-                context.variables[output_var] = is_yes
-                context.variables["last_output"] = is_yes
+                context.set_variable(output_var, is_yes)
+                context.set_variable("last_output", is_yes, is_system=True)
                 choice_str = "예 (True)" if is_yes else "아니오 (False)"
                 return f"사용자 대화상자 응답 완료: [{choice_str}] 선택됨 (변수 '{{{{{output_var}}}}}' = {is_yes})"
 
@@ -1012,7 +1057,9 @@ class GeneralNode(BaseNode):
             target_mode = self.config.get("target_mode", "object")       # object (기본값) | current (현재 활성창)
             direction = self.config.get("direction", "vertical")         # vertical (상하) | horizontal (좌우)
             distance_mode = self.config.get("distance_mode", "ticks")    # ticks | page_down | page_up | end | home
-            ticks = int(self.config.get("ticks", 5))
+            raw_ticks = self.config.get("ticks", 5)
+            ticks_str = render_template(str(raw_ticks), context.variables) if isinstance(raw_ticks, str) else str(raw_ticks)
+            ticks = int(float(ticks_str)) if ticks_str.strip() else 5
             ticks_direction = self.config.get("ticks_direction", "backward")  # backward (아래/오른쪽) | forward (위/왼쪽)
 
             dir_label = "좌우(가로)" if direction == "horizontal" else "상하(세로)"
@@ -1053,8 +1100,8 @@ class GeneralNode(BaseNode):
                 ticks_direction=ticks_direction
             )
 
-            context.variables["scroll_at_start"] = bool(scroll_res.get("at_start", False))
-            context.variables["scroll_at_end"] = bool(scroll_res.get("at_end", False))
+            context.set_variable("scroll_at_start", bool(scroll_res.get("at_start", False)), is_system=True)
+            context.set_variable("scroll_at_end", bool(scroll_res.get("at_end", False)), is_system=True)
 
             dist_label_map = {
                 "ticks": f"휠 {abs(ticks)}칸 ({'아래/오른쪽' if ((ticks < 0) or (ticks > 0 and ticks_direction != 'forward')) else '위/왼쪽'})",

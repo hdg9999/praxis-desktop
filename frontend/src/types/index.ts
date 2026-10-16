@@ -49,6 +49,20 @@ export interface FlowNodeData {
   status?: 'idle' | 'running' | 'success' | 'error';
 }
 
+export type VariableType = 'string' | 'number' | 'boolean' | 'json';
+
+export interface WorkflowVariable {
+  name: string;
+  type: VariableType;
+  defaultValue: any;
+  description?: string;
+}
+
+export interface WorkflowSettings {
+  execution_delay: number;
+  default_llm_model: string;
+}
+
 export interface Flow {
   id: string;
   name: string;
@@ -56,6 +70,8 @@ export interface Flow {
   graph_data: {
     nodes: any[];
     edges: any[];
+    settings?: WorkflowSettings;
+    variables?: WorkflowVariable[];
   };
   created_at: string;
   updated_at: string;

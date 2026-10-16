@@ -8,7 +8,9 @@ from app.services.ollama_client import ollama_client
 class AINode(BaseNode):
     def __init__(self, id: str, name: str, config: Dict[str, Any]):
         super().__init__(id, name, "AI", config)
-        self.model = config.get("model", "llama3")
+        raw_model = str(config.get("model") or "").strip()
+        default_model = str(config.get("default_llm_model") or "").strip()
+        self.model = raw_model or default_model or "llama3"
         self.prompt_template = config.get("prompt", "")
         self.system_prompt = config.get("system_prompt", None)
         self.temperature = float(config.get("temperature", 0.7))
@@ -17,6 +19,14 @@ class AINode(BaseNode):
     async def run(self, context: ExecutionContext) -> NodeResult:
         if context.is_cancelled():
             return NodeResult(success=False, error="실행이 취소되었습니다.")
+
+        # 워크플로우 전역 설정의 기본 LLM 모델 폴백 지원
+        raw_cfg_model = str(self.config.get("model") or "").strip()
+        flow_settings = getattr(context, "flow_settings", None)
+        flow_default_model = ""
+        if isinstance(flow_settings, dict):
+            flow_default_model = str(flow_settings.get("default_llm_model") or "").strip()
+        active_model = raw_cfg_model or flow_default_model or self.model
 
         # 템플릿 변수 치환 적용
         resolved_prompt = render_template(self.prompt_template, context.variables)
@@ -44,7 +54,7 @@ class AINode(BaseNode):
         try:
             # 2) AI 응답 스트리밍
             async for token in ollama_client.stream_generate(
-                model=self.model,
+                model=active_model,
                 prompt=resolved_prompt,
                 system_prompt=self.system_prompt,
                 temperature=self.temperature
@@ -71,6 +81,17 @@ class AINode(BaseNode):
                     target="all"
                 )
 
+            # 다음 노드에서 사용할 수 있도록 context 변수 저장 (선언 및 타입 검증 포함)
+            raw_out = self.config.get("output_variable")
+            out_var = str(raw_out).strip() if raw_out is not None else ""
+            if not out_var and not context.strict_variables:
+                out_var = "ai_output"
+            context.set_variable(out_var, accumulated_response)
+            context.set_variable("last_output", accumulated_response, is_system=True)
+            if hasattr(context, "variables") and isinstance(context.variables, dict):
+                context.variables[out_var] = accumulated_response
+                context.variables["last_output"] = accumulated_response
+
             # 완료 이벤트 전송 (최종 응답 + 해당 시점 스크린샷)
             await context.emit_event(
                 node_id=self.id,
@@ -80,10 +101,6 @@ class AINode(BaseNode):
                 content=accumulated_response,
                 image_path=after_screenshot_url
             )
-
-            # 다음 노드에서 사용할 수 있도록 context 변수 저장
-            context.variables[self.output_variable] = accumulated_response
-            context.variables["last_output"] = accumulated_response
 
             return NodeResult(
                 success=True,

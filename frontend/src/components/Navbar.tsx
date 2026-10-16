@@ -11,6 +11,7 @@ import {
   AlertTriangle,
   AlertCircle,
   Globe,
+  SlidersHorizontal,
 } from 'lucide-react';
 import { Flow } from '../types';
 import { FlowValidationResult } from '../utils/flowValidator';
@@ -27,6 +28,7 @@ interface NavbarProps {
   onSaveFlow: () => void;
   onRunFlow: () => void;
   onOpenSettings: () => void;
+  onOpenFlowSettings?: () => void;
   isSaving?: boolean;
   isLoadingFlows?: boolean;
   validation?: FlowValidationResult;
@@ -43,6 +45,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   onSaveFlow,
   onRunFlow,
   onOpenSettings,
+  onOpenFlowSettings,
   isSaving,
   isLoadingFlows,
   validation,
@@ -128,6 +131,17 @@ export const Navbar: React.FC<NavbarProps> = ({
             className="px-3 py-1.5 bg-slate-950 border border-slate-700 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded-lg text-xs font-medium text-slate-100 placeholder-slate-500 focus:outline-none w-48 sm:w-64 transition-all"
             title={t('nav.flowNameTooltip')}
           />
+
+          {onOpenFlowSettings && (
+            <button
+              onClick={onOpenFlowSettings}
+              className="flex items-center gap-1 px-2.5 py-1.5 text-indigo-300 hover:text-white bg-indigo-950/50 hover:bg-indigo-900/70 rounded-lg transition-colors border border-indigo-800/70 text-xs font-medium"
+              title={t('nav.flowSettingsTooltip')}
+            >
+              <SlidersHorizontal className="w-3.5 h-3.5 text-indigo-400" />
+              <span className="hidden xl:inline">{t('nav.flowSettings')}</span>
+            </button>
+          )}
 
           <button
             onClick={onNewFlow}

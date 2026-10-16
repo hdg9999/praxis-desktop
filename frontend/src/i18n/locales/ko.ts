@@ -46,6 +46,8 @@ export const ko = {
     runFlow: 'Flow 실행',
     emergencyStop: '비상 정지',
     settings: '환경설정',
+    flowSettings: '워크플로우 설정',
+    flowSettingsTooltip: '현재 워크플로우 전역 설정 (이름, 설명, 실행 속도, 기본 LLM 모델)',
     cannotRunTooltip: '실행 불가 사유:\n{errors}',
     runFlowTooltip: '워크플로우 실행',
   },
@@ -469,6 +471,65 @@ export const ko = {
     screenshotViewer: '스크린샷 원본 뷰어',
     close: '닫기 (ESC)',
   },
+
+  // 좌측 패널 탭 (스킬 / 워크플로우)
+  workflowTab: {
+    tabSkills: '스킬',
+    tabWorkflows: '워크플로우',
+    searchPlaceholder: '저장된 워크플로우 검색...',
+    newWorkflowBtn: '새 워크플로우',
+    noDescription: '설명이 등록되지 않은 워크플로우입니다.',
+    unsavedBadge: '미저장',
+    activeBadge: '편집 중',
+    nodeCount: '노드 {count}개',
+    varCount: '변수 {count}개',
+    emptyList: '저장된 워크플로우가 없습니다.',
+    deleteConfirm: "'{name}' 워크플로우를 삭제하시겠습니까?",
+    openSettingsTooltip: '워크플로우 전역 설정 열기',
+    deleteTooltip: '워크플로우 삭제',
+  },
+
+  // 워크플로우 전역 설정 (Flow Global Settings)
+  flowSettings: {
+    title: '워크플로우 전역 설정',
+    subtitle: '현재 워크플로우의 이름, 설명, 노드 실행 속도 및 기본 AI 모델을 설정합니다.',
+    nameLabel: '워크플로우 이름',
+    namePlaceholder: '워크플로우 이름을 입력하세요',
+    descLabel: '워크플로우 설명',
+    descPlaceholder: '워크플로우의 역할과 동작에 대한 간단한 설명을 입력하세요 (좌측 워크플로우 탭에 표시됨)',
+    delayLabel: '워크플로우 실행 속도 (노드 실행 전 고정 딜레이)',
+    delayHelp: '각 스킬 노드가 실행되기 직전에 고정적으로 대기할 시간(초)입니다. (기본값: 0.3초)',
+    defaultModelLabel: '기본 LLM 모델명 (Ollama 연동)',
+    defaultModelPlaceholder: '예: llama3, qwen2.5:7b (미지정 시 시스템 첫 번째 모델 사용)',
+    defaultModelHelp: '신규 생성되는 AI 질의(Ollama) 및 기본 에이전트 노드에 기본값으로 자동 적용될 모델명입니다.',
+    applyModelToExistingBtn: '현재 워크플로우 내 모든 AI 노드에 일괄 적용',
+    appliedCountMsg: '총 {count}개의 AI/에이전트 노드에 기본 모델이 적용되었습니다.',
+    saveBtn: '전역 설정 적용',
+  },
+
+  // 워크플로우 변수 관리 패널 (Variable Manager Panel)
+  variables: {
+    panelTitle: '워크플로우 변수 관리',
+    declaredCount: '선언 변수 {count}개',
+    systemCount: '시스템 변수 {count}개',
+    addVariableBtn: '변수 추가',
+    varNamePlaceholder: '변수명 (영문/숫자/_)',
+    varTypeString: '문자열 (String)',
+    varTypeNumber: '숫자 (Number)',
+    varTypeBoolean: '논리값 (Boolean)',
+    varTypeJson: 'JSON (객체/배열)',
+    varDefaultPlaceholder: '기본값 입력',
+    varDescPlaceholder: '변수 설명 (선택)',
+    noDeclaredVars: '선언된 워크플로우 변수가 없습니다. 우측 상단 [+ 변수 추가] 버튼으로 변수를 선언하세요.',
+    systemVarsTitle: '시스템 기본 제공 변수 (읽기 전용)',
+    insertHint: '클릭 시 활성 입력창에 삽입 · 드래그하여 텍스트 속성에 놓기',
+    undeclaredWarning: '선언되지 않은 변수입니다. 먼저 변수를 선언해 주세요.',
+    declareNowBtn: "'{name}' 변수 즉시 선언 ({type})",
+    selectOutputVarPlaceholder: '-- 선언된 출력 변수 선택 --',
+    outputVarHelp: '출력 변수는 반드시 워크플로우 변수 관리 패널에 선언된 변수만 지정할 수 있습니다.',
+    quickInsertLabel: '변수 간편 삽입 (클릭 또는 드래그):',
+  },
 };
 
 export type TranslationType = typeof ko;
+

@@ -11,6 +11,7 @@ import logging
 from typing import Dict, Any, List, Optional
 
 from app.nodes.base import BaseNode, ExecutionContext, NodeResult
+from app.nodes.general import render_template
 from app.services.ollama_client import ollama_client
 from app.services.screen_capture import screen_capture_service
 from app.core.config import settings
@@ -31,7 +32,9 @@ class AgentNode(BaseNode):
     def __init__(self, id: str, name: str, config: Dict[str, Any]):
         super().__init__(id, name, "AGENT", config)
         self.llm_backend: str = config.get("llm_backend", "ollama")
-        self.model: str = config.get("model", "llama3.1")
+        raw_model = str(config.get("model") or "").strip()
+        default_model = str(config.get("default_llm_model") or "").strip()
+        self.model: str = raw_model or default_model or "llama3.1"
         self.prompt: str = config.get("prompt", "")
         self.system_prompt: str = config.get("system_prompt", "")
         self.include_screen_capture: bool = config.get("include_screen_capture", False)
@@ -43,14 +46,20 @@ class AgentNode(BaseNode):
         self.output_variable: str = config.get("output_variable", "agent_result")
 
     def _substitute_variables(self, text: str, variables: Dict[str, Any]) -> str:
-        """{{variable}} 형태의 템플릿 치환"""
+        """{{variable}} 형태의 템플릿 치환 (이종 언어 타입 안전 직렬화 포함)"""
         if not text:
             return ""
-        for k, v in variables.items():
-            text = text.replace(f"{{{{{k}}}}}", str(v))
-        return text
+        return render_template(text, variables)
 
     async def run(self, context: ExecutionContext) -> NodeResult:
+        raw_cfg_model = str(self.config.get("model") or "").strip()
+        flow_settings = getattr(context, "flow_settings", None)
+        flow_default_model = ""
+        if isinstance(flow_settings, dict):
+            flow_default_model = str(flow_settings.get("default_llm_model") or "").strip()
+        active_model = raw_cfg_model or flow_default_model or self.model
+        self.model = active_model
+
         logger.info(f"[AgentNode:{self.id}] Starting agent task: '{self.name}' with model '{self.model}'")
 
         if context.is_cancelled():
@@ -300,8 +309,38 @@ class AgentNode(BaseNode):
         if not completed_normally and not final_answer:
             final_answer = f"에이전트가 최대 반복 횟수({self.max_steps}회) 내에 작업을 종료했습니다."
 
-        # 7. 출력 변수 저장
-        context.variables[self.output_variable] = final_answer
+        # 7. 출력 변수 저장 (선언 및 타입 검증 포함)
+        try:
+            is_strict = getattr(context, "strict_variables", False) is True
+            raw_out = self.config.get("output_variable")
+            out_var = str(raw_out).strip() if raw_out is not None else ""
+            if not out_var and not is_strict:
+                out_var = getattr(self, "output_variable", "agent_result") or "agent_result"
+
+            if hasattr(context, "set_variable"):
+                try:
+                    context.set_variable(out_var, final_answer)
+                except Exception:
+                    if is_strict:
+                        raise
+            if hasattr(context, "set_variable"):
+                try:
+                    context.set_variable("last_output", final_answer, is_system=True)
+                except Exception:
+                    pass
+            if hasattr(context, "variables") and isinstance(context.variables, dict):
+                context.variables[out_var] = final_answer
+                context.variables["last_output"] = final_answer
+        except Exception as var_err:
+            err_msg = f"{self.name} 출력 변수 저장 오류: {str(var_err)}"
+            await context.emit_event(
+                node_id=self.id,
+                node_name=self.name,
+                node_type=self.node_type,
+                event_type="ERROR",
+                content=f"❌ {err_msg}"
+            )
+            return NodeResult(success=False, error=err_msg)
 
         # 8. 사후 스크린샷 촬영 (설정 활성화 시)
         screenshot_url = None

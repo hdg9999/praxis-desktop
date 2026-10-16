@@ -1,17 +1,28 @@
 import json
 import asyncio
+import re
 from datetime import datetime, timezone
-from typing import Dict, Any, List, Optional, Callable, Awaitable
+from typing import Dict, Any, List, Optional, Callable, Awaitable, Tuple
 from sqlmodel import Session, select
 from app.core.database import engine
 from app.core.config import settings
 from app.core.kill_switch import kill_switch
 from app.models.session import ExecutionSession
 from app.models.message import ExecutionMessage
-from app.nodes.base import BaseNode, ExecutionContext, NodeResult
+from app.nodes.base import (
+    BaseNode,
+    ExecutionContext,
+    NodeResult,
+    SYSTEM_VARIABLE_NAMES,
+    VALID_VARIABLE_NAME_RE,
+    coerce_variable_value,
+)
 from app.nodes.general import GeneralNode
 from app.nodes.ai import AINode
 from app.nodes.agent import AgentNode
+
+TEMPLATE_VAR_RE = re.compile(r"\{\{\s*([^}\s]+)\s*\}\}")
+
 
 class PassthroughNode(BaseNode):
     def __init__(self, id: str, name: str, config: Optional[Dict[str, Any]] = None):
@@ -21,16 +32,29 @@ class PassthroughNode(BaseNode):
         """시작/끝 마커 노드는 어떠한 대기나 외부 조작 없이 즉시 통과"""
         return NodeResult(success=True, output=None)
 
+
 class FlowEngine:
     def __init__(self):
         self.active_runs: Dict[str, bool] = {}
 
-    def instantiate_node(self, node_data: Dict[str, Any]) -> BaseNode:
+    def instantiate_node(
+        self,
+        node_data: Dict[str, Any],
+        flow_settings: Optional[Dict[str, Any]] = None,
+    ) -> BaseNode:
         node_id = node_data.get("id", "")
         node_type = node_data.get("type", "")
         data = node_data.get("data", {})
         label = data.get("label", node_id)
-        config = data.get("config", {})
+        config = dict(data.get("config", {}) or {})
+
+        # 워크플로우 전역 설정의 기본 LLM 모델(default_llm_model) 주입
+        if flow_settings:
+            default_llm = str(flow_settings.get("default_llm_model") or "").strip()
+            if default_llm:
+                config["default_llm_model"] = default_llm
+                if not str(config.get("model") or "").strip():
+                    config["model"] = default_llm
 
         if node_type in ["flow_start", "flow_end"]:
             return PassthroughNode(id=node_id, name=label, config=config)
@@ -44,6 +68,99 @@ class FlowEngine:
         else:
             # 기본값 일반 노드
             return GeneralNode(id=node_id, name=label, subtype="delay", config={"seconds": 1.0})
+
+    def validate_flow_variables(
+        self,
+        ordered_nodes: List[Dict[str, Any]],
+        variable_schemas: Dict[str, Dict[str, Any]],
+    ) -> Optional[Tuple[str, str, str]]:
+        """
+        워크플로우 실행 전 활성 노드들의 출력 변수(output_variable) 및 템플릿 참조({{var}})가
+        모두 선언된 변수인지, 그리고 변수 타입이 일치하는지 사전 검증합니다.
+        오류 발견 시 (node_id, node_name, error_message) 튜플을 반환합니다.
+        """
+        template_keys = [
+            "text",
+            "window_title",
+            "file_path",
+            "program_path",
+            "arguments",
+            "process_name",
+            "content",
+            "title",
+            "message",
+            "prompt",
+            "system_prompt",
+        ]
+
+        for node in ordered_nodes:
+            node_id = node.get("id", "")
+            node_type = node.get("type", "")
+            if node_type in ("flow_start", "flow_end"):
+                continue
+
+            data = node.get("data", {}) or {}
+            label = data.get("label", node_id)
+            config = data.get("config", {}) or {}
+
+            # 1. 출력 변수(output_variable) 선언 및 타입 호환성 검사
+            requires_output = False
+            expected_types = ("string", "number", "boolean", "json")
+
+            if node_type in ("general_clipboard_read", "general_file_read", "ai_ollama", "agent_basic", "agent"):
+                requires_output = True
+            elif node_type == "general_message_box" and str(config.get("button_type", "ok")).lower() == "yes_no":
+                requires_output = True
+                expected_types = ("boolean", "string")
+
+            if requires_output:
+                out_var = str(config.get("output_variable") or "").strip()
+                if not out_var:
+                    return (
+                        node_id,
+                        label,
+                        f"[{label}] 결과를 저장할 출력 변수가 지정되지 않았습니다. 하단 '워크플로우 변수 관리' 패널에서 변수를 선언하고 선택해 주세요.",
+                    )
+                if not VALID_VARIABLE_NAME_RE.match(out_var):
+                    return (
+                        node_id,
+                        label,
+                        f"[{label}] 출력 변수 이름 '{out_var}'의 형식이 올바르지 않습니다.",
+                    )
+                if out_var in SYSTEM_VARIABLE_NAMES:
+                    return (
+                        node_id,
+                        label,
+                        f"[{label}] 시스템 예약 변수('{out_var}')에는 결과를 덮어쓸 수 없습니다. 직접 선언한 변수를 선택해 주세요.",
+                    )
+                if out_var not in variable_schemas:
+                    return (
+                        node_id,
+                        label,
+                        f"[{label}] 선언되지 않은 출력 변수 '{out_var}'가 설정되어 있습니다. 하단 '워크플로우 변수 관리' 패널에서 먼저 변수를 등록해 주세요.",
+                    )
+                declared_type = variable_schemas[out_var].get("type", "string")
+                if declared_type not in expected_types:
+                    return (
+                        node_id,
+                        label,
+                        f"[{label}] 출력 변수 '{out_var}'의 타입({declared_type})이 노드 출력 형식({', '.join(expected_types)})과 호환되지 않습니다.",
+                    )
+
+            # 2. 텍스트/템플릿 속성 내 {{변수}} 참조 검사
+            for key in template_keys:
+                raw_val = config.get(key)
+                if isinstance(raw_val, str) and "{{" in raw_val:
+                    for match in TEMPLATE_VAR_RE.finditer(raw_val):
+                        ref_var = match.group(1).strip()
+                        if ref_var not in variable_schemas and ref_var not in SYSTEM_VARIABLE_NAMES:
+                            return (
+                                node_id,
+                                label,
+                                f"[{label}] 속성에 선언되지 않은 변수 '{{{{{ref_var}}}}}'가 사용되었습니다. 하단 '워크플로우 변수 관리' 패널에서 변수를 먼저 선언해 주세요.",
+                            )
+
+        return None
 
     def get_execution_order(self, nodes: List[Dict[str, Any]], edges: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Left-to-Right 엣지 연결에 따른 순차 실행 순서 결정 (위상 정렬 기반)"""
@@ -104,6 +221,18 @@ class FlowEngine:
 
         return ordered_nodes
 
+    async def _sleep_interruptible(self, seconds: float, is_cancelled_fn: Callable[[], bool]) -> None:
+        """취소(KillSwitch) 여부를 주기적으로 확인하며 지정된 시간(초)만큼 대기합니다."""
+        if seconds <= 0:
+            return
+        elapsed = 0.0
+        while elapsed < seconds:
+            if is_cancelled_fn():
+                break
+            step = min(0.05, seconds - elapsed)
+            await asyncio.sleep(step)
+            elapsed += step
+
     async def run_flow(
         self,
         flow_id: str,
@@ -118,6 +247,15 @@ class FlowEngine:
 
         nodes_data = graph_data.get("nodes", [])
         edges_data = graph_data.get("edges", [])
+        flow_settings = graph_data.get("settings") or {}
+        raw_variables = graph_data.get("variables")
+
+        # 워크플로우 실행 속도 (각 스킬 노드 실행 직전 고정 딜레이, 기본값 0.3초)
+        try:
+            execution_delay = max(0.0, float(flow_settings.get("execution_delay", 0.3)))
+        except (ValueError, TypeError):
+            execution_delay = 0.3
+
         ordered_nodes = self.get_execution_order(nodes_data, edges_data)
 
         # 1. DB에 ExecutionSession 생성
@@ -161,35 +299,81 @@ class FlowEngine:
             event_payload["message_id"] = msg_id
             await event_callback(event_payload)
 
-        context = ExecutionContext(
-            session_id=session_id,
-            event_callback=internal_event_callback,
-            check_cancelled=lambda: kill_switch.is_cancelled() or not self.active_runs.get(session_id, False),
-            variables={}
-        )
-
         overall_status = "SUCCESS"
 
         try:
-            for node_data in ordered_nodes:
-                if context.is_cancelled():
-                    overall_status = "CANCELLED"
-                    break
+            # 2. 워크플로우 변수 스키마 파싱 및 사전 유효성 검증
+            strict_variables = isinstance(raw_variables, list)
+            variable_schemas: Dict[str, Dict[str, Any]] = {}
 
-                node_instance = self.instantiate_node(node_data)
-                result: NodeResult = await node_instance.run(context)
+            if strict_variables:
+                for item in raw_variables:
+                    if not isinstance(item, dict):
+                        continue
+                    v_name = str(item.get("name") or "").strip()
+                    v_type = str(item.get("type") or "string").strip().lower()
+                    v_default = item.get("defaultValue", "")
+                    if not v_name:
+                        continue
+                    # 초기 기본값의 타입 유효성 검증
+                    coerce_variable_value(v_default, v_type)
+                    variable_schemas[v_name] = {
+                        "name": v_name,
+                        "type": v_type,
+                        "defaultValue": v_default,
+                        "description": item.get("description", ""),
+                    }
 
-                if not result or not result.success:
+                validation_err = self.validate_flow_variables(ordered_nodes, variable_schemas)
+                if validation_err:
+                    err_node_id, err_node_name, err_text = validation_err
                     overall_status = "FAILED"
-                    err_msg = getattr(result, "error", None) or "노드 실행에 실패했습니다."
                     await internal_event_callback({
-                        "node_id": node_data.get("id", ""),
-                        "node_name": node_data.get("data", {}).get("label", node_instance.name),
-                        "node_type": getattr(node_instance, "node_type", "GENERAL"),
+                        "node_id": err_node_id,
+                        "node_name": err_node_name,
+                        "node_type": "GENERAL",
                         "event_type": "ERROR",
-                        "content": f"❌ {err_msg}"
+                        "content": f"❌ {err_text}",
                     })
-                    break
+
+            if overall_status == "SUCCESS":
+                context = ExecutionContext(
+                    session_id=session_id,
+                    event_callback=internal_event_callback,
+                    check_cancelled=lambda: kill_switch.is_cancelled() or not self.active_runs.get(session_id, False),
+                    variables={},
+                    variable_schemas=variable_schemas,
+                    strict_variables=strict_variables,
+                    flow_settings=flow_settings,
+                )
+
+                for node_data in ordered_nodes:
+                    if context.is_cancelled():
+                        overall_status = "CANCELLED"
+                        break
+
+                    # 각 스킬 노드 실행 직전 고정 딜레이 적용 (시작/끝 마커 노드는 제외)
+                    node_type = node_data.get("type", "")
+                    if node_type not in ("flow_start", "flow_end") and execution_delay > 0:
+                        await self._sleep_interruptible(execution_delay, context.is_cancelled)
+                        if context.is_cancelled():
+                            overall_status = "CANCELLED"
+                            break
+
+                    node_instance = self.instantiate_node(node_data, flow_settings=flow_settings)
+                    result: NodeResult = await node_instance.run(context)
+
+                    if not result or not result.success:
+                        overall_status = "FAILED"
+                        err_msg = getattr(result, "error", None) or "노드 실행에 실패했습니다."
+                        await internal_event_callback({
+                            "node_id": node_data.get("id", ""),
+                            "node_name": node_data.get("data", {}).get("label", node_instance.name),
+                            "node_type": getattr(node_instance, "node_type", "GENERAL"),
+                            "event_type": "ERROR",
+                            "content": f"❌ {err_msg}"
+                        })
+                        break
 
         except Exception as e:
             overall_status = "FAILED"

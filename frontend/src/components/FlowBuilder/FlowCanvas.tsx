@@ -32,6 +32,7 @@ interface FlowCanvasProps {
   selectedNodeId?: string | null;
   onSnapshot?: (nodes: Node[], edges: Edge[]) => void;
   orphanNodeIds?: string[];
+  defaultLlmModel?: string;
 }
 
 export const FlowCanvas: React.FC<FlowCanvasProps> = ({
@@ -45,6 +46,7 @@ export const FlowCanvas: React.FC<FlowCanvasProps> = ({
   selectedNodeId,
   onSnapshot,
   orphanNodeIds = [],
+  defaultLlmModel,
 }) => {
   const nodeTypes = useMemo(() => ({
     flow_start: StartNode,
@@ -150,6 +152,11 @@ export const FlowCanvas: React.FC<FlowCanvasProps> = ({
         y: event.clientY - reactFlowBounds.top - 30,
       };
 
+      const finalConfig = { ...defaultConfig };
+      if ((type === 'ai_ollama' || type === 'agent_basic') && defaultLlmModel) {
+        finalConfig.model = defaultLlmModel;
+      }
+
       const newNode: Node = {
         id: `node_${Date.now()}`,
         type,
@@ -158,7 +165,7 @@ export const FlowCanvas: React.FC<FlowCanvasProps> = ({
         data: {
           label,
           type,
-          config: defaultConfig,
+          config: finalConfig,
         },
       };
 
@@ -170,7 +177,7 @@ export const FlowCanvas: React.FC<FlowCanvasProps> = ({
     } catch (err) {
       console.error('Drop parsing error', err);
     }
-  }, [nodes, edges, setNodes, onSelectNode, onSnapshot]);
+  }, [nodes, edges, setNodes, onSelectNode, onSnapshot, defaultLlmModel]);
 
   const onNodeClick = useCallback((_: React.MouseEvent, node: Node) => {
     onSelectNode(node);

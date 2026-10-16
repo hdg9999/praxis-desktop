@@ -4,30 +4,58 @@ import { Navbar } from './components/Navbar';
 import { SkillPanel } from './components/FlowBuilder/SkillPanel';
 import { FlowCanvas } from './components/FlowBuilder/FlowCanvas';
 import { PropertyInspector } from './components/FlowBuilder/PropertyInspector';
+import { FlowSettingsModal } from './components/FlowBuilder/FlowSettingsModal';
+import { VariableManagerPanel } from './components/FlowBuilder/VariableManagerPanel';
 import { SessionSidebar } from './components/AgentRunner/SessionSidebar';
 import { ChatTimeline } from './components/AgentRunner/ChatTimeline';
 import { ScreenshotModal } from './components/AgentRunner/ScreenshotModal';
 import { SettingsModal } from './components/SettingsModal';
 import { StatusBar } from './components/StatusBar';
 import { ObjectPickerOverlay } from './components/ObjectPicker/ObjectPickerOverlay';
-import { Flow, ExecutionSession, ExecutionMessage, NodeType, UIObjectData, FlowNodeData } from './types';
+import {
+  Flow,
+  ExecutionSession,
+  ExecutionMessage,
+  NodeType,
+  UIObjectData,
+  FlowNodeData,
+  WorkflowSettings,
+  WorkflowVariable,
+} from './types';
 import { useFlowHistory } from './hooks/useFlowHistory';
 import { validateFlow } from './utils/flowValidator';
+import { extractVariablesFromLegacyNodes } from './utils/variableUtils';
 import { useI18n } from './i18n';
 import {
   fetchFlows,
   createFlow,
   updateFlow,
+  deleteFlow,
   runFlow,
   stopSession,
   fetchSessions,
   fetchSessionMessages,
   deleteSession,
   fetchOllamaInfo,
-  connectWebSocket
+  connectWebSocket,
 } from './services/api';
 
 const DEFAULT_FLOW_NAME = '샘플 AI 자동화 Flow';
+const DEFAULT_FLOW_DESC = '업무 시작 전 AI 브리핑을 생성하고 클립보드에 자동 복사하는 샘플 워크플로우입니다.';
+
+const DEFAULT_FLOW_SETTINGS: WorkflowSettings = {
+  execution_delay: 0.3,
+  default_llm_model: '',
+};
+
+const INITIAL_VARIABLES: WorkflowVariable[] = [
+  {
+    name: 'ai_brief',
+    type: 'string',
+    defaultValue: '',
+    description: '작업 브리핑 AI 요약 결과',
+  },
+];
 
 const INITIAL_NODES: Node[] = [
   {
@@ -38,8 +66,8 @@ const INITIAL_NODES: Node[] = [
     data: {
       label: '시작',
       type: 'flow_start',
-      config: {}
-    }
+      config: {},
+    },
   },
   {
     id: 'node_1',
@@ -48,8 +76,8 @@ const INITIAL_NODES: Node[] = [
     data: {
       label: '준비 대기 (1초)',
       type: 'general_delay',
-      config: { seconds: 1.0 }
-    }
+      config: { seconds: 1.0 },
+    },
   },
   {
     id: 'node_2',
@@ -62,9 +90,9 @@ const INITIAL_NODES: Node[] = [
         model: 'llama3',
         prompt: 'PC 작업을 시작합니다. 오늘의 업무 자동화 준비 상태를 1줄로 요약해줘.',
         temperature: 0.7,
-        output_variable: 'ai_brief'
-      }
-    }
+        output_variable: 'ai_brief',
+      },
+    },
   },
   {
     id: 'node_3',
@@ -73,8 +101,8 @@ const INITIAL_NODES: Node[] = [
     data: {
       label: 'AI 결과 클립보드 복사',
       type: 'general_clipboard_copy',
-      config: { text: '{{ai_brief}}' }
-    }
+      config: { text: '{{ai_brief}}' },
+    },
   },
   {
     id: 'node_end',
@@ -84,9 +112,9 @@ const INITIAL_NODES: Node[] = [
     data: {
       label: '끝',
       type: 'flow_end',
-      config: {}
-    }
-  }
+      config: {},
+    },
+  },
 ];
 
 const INITIAL_EDGES: Edge[] = [
@@ -95,29 +123,29 @@ const INITIAL_EDGES: Edge[] = [
     source: 'node_start',
     target: 'node_1',
     animated: true,
-    style: { stroke: '#10b981', strokeWidth: 2 }
+    style: { stroke: '#10b981', strokeWidth: 2 },
   },
   {
     id: 'e1-2',
     source: 'node_1',
     target: 'node_2',
     animated: true,
-    style: { stroke: '#3b82f6', strokeWidth: 2 }
+    style: { stroke: '#3b82f6', strokeWidth: 2 },
   },
   {
     id: 'e2-3',
     source: 'node_2',
     target: 'node_3',
     animated: true,
-    style: { stroke: '#8b5cf6', strokeWidth: 2 }
+    style: { stroke: '#8b5cf6', strokeWidth: 2 },
   },
   {
     id: 'e3-end',
     source: 'node_3',
     target: 'node_end',
     animated: true,
-    style: { stroke: '#f43f5e', strokeWidth: 2 }
-  }
+    style: { stroke: '#f43f5e', strokeWidth: 2 },
+  },
 ];
 
 export function App() {
@@ -134,12 +162,23 @@ export function App() {
   const [isLoadingFlows, setIsLoadingFlows] = useState(true);
   const [nodes, setNodes, onNodesChange] = useNodesState(INITIAL_NODES);
   const [edges, setEdges, onEdgesChange] = useEdgesState(INITIAL_EDGES);
+  const [flowSettings, setFlowSettings] = useState<WorkflowSettings>(DEFAULT_FLOW_SETTINGS);
+  const [variables, setVariables] = useState<WorkflowVariable[]>(INITIAL_VARIABLES);
   const [selectedNode, setSelectedNode] = useState<Node | null>(null);
   const [ollamaModels, setOllamaModels] = useState<string[]>([]);
   const [isSaving, setIsSaving] = useState(false);
 
-  // 실시간 워크플로우 유효성 검사 (시작-끝 도달성, 무한루프, 고립 노드 등)
-  const validation = useMemo(() => validateFlow(nodes, edges, t), [nodes, edges, t]);
+  // 변수 클릭 삽입 트리거 (하단 패널 -> 우측 Inspector)
+  const [externalInsertTrigger, setExternalInsertTrigger] = useState<{
+    varName: string;
+    timestamp: number;
+  } | null>(null);
+
+  // 실시간 워크플로우 유효성 검사 (시작-끝 도달성, 무한루프, 고립 노드, 변수 선언/타입 검증 포함)
+  const validation = useMemo(
+    () => validateFlow(nodes, edges, t, variables),
+    [nodes, edges, t, variables]
+  );
 
   // 실행 취소(Undo) / 다시 실행(Redo) 히스토리 훅
   const { takeSnapshot, undo, redo, canUndo, canRedo, clearHistory } = useFlowHistory();
@@ -154,6 +193,7 @@ export function App() {
   // 모달 상태
   const [modalImage, setModalImage] = useState<{ url: string; title?: string } | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isFlowSettingsOpen, setIsFlowSettingsOpen] = useState(false);
   const [isPickerOpen, setIsPickerOpen] = useState(false);
   const [pickingNodeId, setPickingNodeId] = useState<string | null>(null);
   const pickingTargetFieldRef = React.useRef<string>('object_data');
@@ -527,6 +567,23 @@ export function App() {
     const rawNodes = flow.graph_data?.nodes || [];
     const rawEdges = flow.graph_data?.edges || [];
     const migrated = ensureStartAndEndNodes(rawNodes, rawEdges);
+
+    // 전역 설정 동기화 (기본값: 실행 딜레이 0.3초)
+    const loadedSettings: WorkflowSettings = {
+      execution_delay:
+        typeof flow.graph_data?.settings?.execution_delay === 'number'
+          ? flow.graph_data.settings.execution_delay
+          : 0.3,
+      default_llm_model: flow.graph_data?.settings?.default_llm_model || '',
+    };
+    setFlowSettings(loadedSettings);
+
+    // 워크플로우 변수 동기화 (레거시 저장본일 경우 노드 내 출력/참조 변수를 자동 추출하여 호환성 보장)
+    const loadedVars: WorkflowVariable[] = Array.isArray(flow.graph_data?.variables)
+      ? flow.graph_data.variables
+      : extractVariablesFromLegacyNodes(migrated.nodes);
+    setVariables(loadedVars);
+
     setNodes(migrated.nodes);
     setEdges(migrated.edges);
     setSelectedNode(null);
@@ -534,23 +591,48 @@ export function App() {
   };
 
   const handleSelectFlowById = (id: string) => {
+    if (activeFlow && activeFlow.id === id) return;
     const target = flows.find((f) => f.id === id);
     if (target) selectFlow(target);
   };
 
   const handleNewFlow = () => {
+    const defaultModel = flowSettings.default_llm_model || ollamaModels[0] || 'llama3';
+    const nextSettings: WorkflowSettings = {
+      execution_delay: 0.3,
+      default_llm_model: flowSettings.default_llm_model || ollamaModels[0] || '',
+    };
+    const nextNodes = INITIAL_NODES.map((n) =>
+      n.type === 'ai_ollama'
+        ? {
+            ...n,
+            data: {
+              ...n.data,
+              config: { ...(n.data as any).config, model: defaultModel },
+            },
+          }
+        : n
+    );
     const newF: Flow = {
       id: `temp_${Date.now()}`,
       name: `새 워크플로우 ${flows.length + 1}`,
-      graph_data: { nodes: INITIAL_NODES, edges: INITIAL_EDGES },
+      description: DEFAULT_FLOW_DESC,
+      graph_data: {
+        nodes: nextNodes,
+        edges: INITIAL_EDGES,
+        settings: nextSettings,
+        variables: INITIAL_VARIABLES,
+      },
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
     setActiveFlow(newF);
-    setNodes(INITIAL_NODES);
+    setFlowSettings(nextSettings);
+    setVariables(INITIAL_VARIABLES);
+    setNodes(nextNodes);
     setEdges(INITIAL_EDGES);
     setSelectedNode(null);
-    clearHistory(INITIAL_NODES, INITIAL_EDGES);
+    clearHistory(nextNodes, INITIAL_EDGES);
   };
 
   const handleUpdateFlowName = (name: string) => {
@@ -558,24 +640,178 @@ export function App() {
     setActiveFlow((prev) => (prev ? { ...prev, name } : null));
   };
 
-  const handleSaveFlow = async () => {
-    if (!activeFlow) return;
+  // 워크플로우 전역 설정 적용 핸들러
+  const handleApplyFlowSettings = (
+    name: string,
+    description: string,
+    nextSettings: WorkflowSettings,
+    applyModelToExistingNodes?: boolean
+  ) => {
+    setFlowSettings(nextSettings);
+
+    let updatedNodes = nodes;
+    if (applyModelToExistingNodes && nextSettings.default_llm_model.trim()) {
+      const targetModel = nextSettings.default_llm_model.trim();
+      updatedNodes = nodes.map((n) => {
+        if (n.type === 'ai_ollama' || n.type === 'agent_basic') {
+          const nd = n.data as unknown as FlowNodeData;
+          return {
+            ...n,
+            data: {
+              ...nd,
+              config: {
+                ...(nd.config || {}),
+                model: targetModel,
+              },
+            },
+          };
+        }
+        return n;
+      });
+      setNodes(updatedNodes);
+      if (
+        selectedNode &&
+        (selectedNode.type === 'ai_ollama' || selectedNode.type === 'agent_basic')
+      ) {
+        const refreshed = updatedNodes.find((n) => n.id === selectedNode.id) || null;
+        setSelectedNode(refreshed);
+      }
+    }
+
+    setActiveFlow((prev) => {
+      if (!prev) return null;
+      return {
+        ...prev,
+        name,
+        description,
+        graph_data: {
+          ...prev.graph_data,
+          nodes: updatedNodes,
+          edges,
+          settings: nextSettings,
+          variables,
+        },
+      };
+    });
+
+    // 저장된 목록에서도 즉시 이름/설명/설정이 반영되어 보이도록 동기화
+    setFlows((prev) =>
+      prev.map((f) =>
+        activeFlow && f.id === activeFlow.id
+          ? {
+              ...f,
+              name,
+              description,
+              graph_data: {
+                ...f.graph_data,
+                nodes: updatedNodes,
+                edges,
+                settings: nextSettings,
+                variables,
+              },
+            }
+          : f
+      )
+    );
+  };
+
+  // 워크플로우 변수 목록 변경 핸들러
+  const handleChangeVariables = (nextVars: WorkflowVariable[]) => {
+    setVariables(nextVars);
+    setActiveFlow((prev) =>
+      prev
+        ? {
+            ...prev,
+            graph_data: {
+              ...prev.graph_data,
+              nodes,
+              edges,
+              settings: flowSettings,
+              variables: nextVars,
+            },
+          }
+        : null
+    );
+  };
+
+  // Inspector에서 신규 변수 즉시 선언 시 호출
+  const handleDeclareVariable = (newVar: WorkflowVariable) => {
+    setVariables((prev) => {
+      if (prev.some((v) => v.name === newVar.name)) return prev;
+      const updated = [...prev, newVar];
+      setActiveFlow((af) =>
+        af
+          ? {
+              ...af,
+              graph_data: {
+                ...af.graph_data,
+                nodes,
+                edges,
+                settings: flowSettings,
+                variables: updated,
+              },
+            }
+          : null
+      );
+      return updated;
+    });
+  };
+
+  const handleSaveFlow = async (): Promise<Flow | null> => {
+    if (!activeFlow) return null;
     setIsSaving(true);
     try {
-      const graphData = { nodes, edges };
+      const graphData = {
+        nodes,
+        edges,
+        settings: flowSettings,
+        variables,
+      };
       const flowName = (activeFlow.name || '').trim() || DEFAULT_FLOW_NAME;
+      const flowDesc = (activeFlow.description || '').trim();
       let saved: Flow;
       if (activeFlow.id.startsWith('temp_') || !flows.some((f) => f.id === activeFlow.id)) {
-        saved = await createFlow(flowName, graphData);
+        saved = await createFlow(flowName, graphData, flowDesc);
       } else {
-        saved = await updateFlow(activeFlow.id, flowName, graphData);
+        saved = await updateFlow(activeFlow.id, flowName, graphData, flowDesc);
       }
       setActiveFlow(saved);
-      await loadFlows();
+      // 신규 워크플로우 저장 시 '워크플로우' 탭에서도 즉시 반영되도록 상태 즉시 갱신 후 서버 목록 재동기화
+      setFlows((prev) => {
+        const exists = prev.some((f) => f.id === saved.id);
+        return exists ? prev.map((f) => (f.id === saved.id ? saved : f)) : [saved, ...prev];
+      });
+      const latestList = await fetchFlows();
+      setFlows(latestList);
+      return saved;
     } catch (e) {
       console.error(e);
+      return null;
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  const handleDeleteFlow = async (flowId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const target = flows.find((f) => f.id === flowId);
+    if (!target) return;
+    if (!window.confirm(t('workflowTab.deleteConfirm', { name: target.name }))) {
+      return;
+    }
+    try {
+      await deleteFlow(flowId);
+      const remaining = flows.filter((f) => f.id !== flowId);
+      setFlows(remaining);
+      if (activeFlow?.id === flowId) {
+        if (remaining.length > 0) {
+          selectFlow(remaining[0]);
+        } else {
+          handleNewFlow();
+        }
+      }
+    } catch (err) {
+      console.error(err);
     }
   };
 
@@ -587,9 +823,10 @@ export function App() {
     }
 
     try {
-      // 실행 전 자동 저장
-      await handleSaveFlow();
-      const runRes = await runFlow(activeFlow.id);
+      // 실행 전 자동 저장 (신규 워크플로우도 저장된 ID로 실행 보장)
+      const savedFlow = await handleSaveFlow();
+      const targetFlowId = savedFlow?.id || activeFlow.id;
+      const runRes = await runFlow(targetFlowId);
 
       // Agent Runner 화면으로 자동 전환 및 새 세션 활성화
       setActiveSessionId(runRes.session_id);
@@ -624,8 +861,13 @@ export function App() {
   const handleAddNodeFromPanel = (type: NodeType, label: string, defaultConfig: Record<string, any>) => {
     takeSnapshot(nodes, edges);
     const finalConfig = { ...defaultConfig };
-    if ((type === 'agent_basic' || type === 'ai_ollama') && ollamaModels.length > 0) {
-      finalConfig.model = ollamaModels[0];
+    if (type === 'agent_basic' || type === 'ai_ollama') {
+      const preferredModel =
+        flowSettings.default_llm_model?.trim() ||
+        (ollamaModels.length > 0 ? ollamaModels[0] : finalConfig.model);
+      if (preferredModel) {
+        finalConfig.model = preferredModel;
+      }
     }
     const newNode: Node = {
       id: `node_${Date.now()}`,
@@ -759,6 +1001,7 @@ export function App() {
         onSaveFlow={handleSaveFlow}
         onRunFlow={handleRunFlow}
         onOpenSettings={() => setIsSettingsOpen(true)}
+        onOpenFlowSettings={() => setIsFlowSettingsOpen(true)}
         isSaving={isSaving}
         isLoadingFlows={isLoadingFlows}
         validation={validation}
@@ -768,22 +1011,49 @@ export function App() {
       <main className="flex-1 flex overflow-hidden relative">
         {currentTab === 'builder' ? (
           <div className="flex-1 flex w-full h-full overflow-hidden">
-            {/* 좌측 스킬 패널 (드래그앤드롭 / 더블클릭) */}
-            <SkillPanel onAddNode={handleAddNodeFromPanel} />
-
-            {/* 중앙 워크플로우 캔버스 (Left-to-Right LR 레이아웃) */}
-            <FlowCanvas
-              nodes={nodes}
-              edges={edges}
-              onNodesChange={onNodesChange}
-              onEdgesChange={onEdgesChange}
-              setNodes={setNodes}
-              setEdges={setEdges}
-              onSelectNode={setSelectedNode}
-              selectedNodeId={selectedNode?.id}
-              onSnapshot={takeSnapshot}
-              orphanNodeIds={validation.orphanNodeIds}
+            {/* 좌측 패널 ('스킬' 탭 & '워크플로우' 탭) */}
+            <SkillPanel
+              onAddNode={handleAddNodeFromPanel}
+              flows={flows}
+              activeFlow={activeFlow}
+              isLoadingFlows={isLoadingFlows}
+              onSelectFlow={handleSelectFlowById}
+              onNewFlow={handleNewFlow}
+              onDeleteFlow={handleDeleteFlow}
+              onOpenFlowSettings={() => setIsFlowSettingsOpen(true)}
             />
+
+            {/* 중앙 영역: 상단 워크플로우 캔버스 + 하단 워크플로우 변수 관리 패널 */}
+            <div className="flex-1 flex flex-col min-w-0 h-full overflow-hidden">
+              <div className="flex-1 min-h-0 relative">
+                <FlowCanvas
+                  nodes={nodes}
+                  edges={edges}
+                  onNodesChange={onNodesChange}
+                  onEdgesChange={onEdgesChange}
+                  setNodes={setNodes}
+                  setEdges={setEdges}
+                  onSelectNode={setSelectedNode}
+                  selectedNodeId={selectedNode?.id}
+                  onSnapshot={takeSnapshot}
+                  orphanNodeIds={validation.orphanNodeIds}
+                  defaultLlmModel={
+                    flowSettings.default_llm_model?.trim() ||
+                    (ollamaModels.length > 0 ? ollamaModels[0] : undefined)
+                  }
+                />
+              </div>
+
+              {/* 메인 윈도우 하단 워크플로우 변수 관리 패널 */}
+              <VariableManagerPanel
+                variables={variables}
+                onChangeVariables={handleChangeVariables}
+                nodes={nodes}
+                onInsertVariable={(varName) =>
+                  setExternalInsertTrigger({ varName, timestamp: Date.now() })
+                }
+              />
+            </div>
 
             {/* 우측 속성 설정 패널 */}
             {selectedNode && (
@@ -794,6 +1064,9 @@ export function App() {
                 onDeleteNode={handleDeleteNode}
                 onClose={() => setSelectedNode(null)}
                 onOpenObjectPicker={(targetField?: string) => handleOpenObjectPicker(selectedNode.id, targetField)}
+                variables={variables}
+                onDeclareVariable={handleDeclareVariable}
+                externalInsertTrigger={externalInsertTrigger}
               />
             )}
           </div>
@@ -846,6 +1119,17 @@ export function App() {
       <SettingsModal
         isOpen={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
+      />
+
+      {/* 워크플로우 전역 설정 모달 */}
+      <FlowSettingsModal
+        isOpen={isFlowSettingsOpen}
+        onClose={() => setIsFlowSettingsOpen(false)}
+        flowName={activeFlow?.name || DEFAULT_FLOW_NAME}
+        flowDescription={activeFlow?.description || ''}
+        settings={flowSettings}
+        ollamaModels={ollamaModels}
+        onApplySettings={handleApplyFlowSettings}
       />
     </div>
   );

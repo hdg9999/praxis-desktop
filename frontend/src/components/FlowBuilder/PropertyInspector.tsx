@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   Trash2,
   X,
@@ -35,10 +35,21 @@ import {
   Power,
   Ban,
   ShieldCheck,
+  Variable,
+  Plus,
+  GripVertical,
+  AlertCircle,
 } from 'lucide-react';
-import { FlowNodeData } from '../../types';
+import { FlowNodeData, VariableType, WorkflowVariable } from '../../types';
 import { resolveImageUrl } from '../../services/api';
 import { AGENT_AVAILABLE_SKILLS } from './skillRegistry';
+import {
+  SYSTEM_VARIABLES,
+  validateVariableNameFormat,
+  getDefaultValueForType,
+  analyzeNodeVariableUsage,
+  isSystemVariable,
+} from '../../utils/variableUtils';
 import { useI18n } from '../../i18n';
 
 interface PropertyInspectorProps {
@@ -48,6 +59,9 @@ interface PropertyInspectorProps {
   onDeleteNode: (nodeId: string) => void;
   onClose: () => void;
   onOpenObjectPicker?: (targetField?: string | any) => void;
+  variables?: WorkflowVariable[];
+  onDeclareVariable?: (variable: WorkflowVariable) => void;
+  externalInsertTrigger?: { varName: string; timestamp: number } | null;
 }
 
 export const PropertyInspector: React.FC<PropertyInspectorProps> = ({
@@ -57,34 +71,396 @@ export const PropertyInspector: React.FC<PropertyInspectorProps> = ({
   onDeleteNode,
   onClose,
   onOpenObjectPicker,
+  variables = [],
+  onDeclareVariable,
+  externalInsertTrigger,
 }) => {
   const { t, language } = useI18n();
   const isEn = language === 'en';
 
-  if (!selectedNode) return null;
+  const [activeTextKey, setActiveTextKey] = useState<string>('');
+  const [newOutVarInput, setNewOutVarInput] = useState<string>('');
+  const [outVarError, setOutVarError] = useState<string | null>(null);
+  const [showDeclareInline, setShowDeclareInline] = useState<boolean>(false);
 
-  const nodeData = selectedNode.data as FlowNodeData;
-  const cfg = { ...nodeData.config };
+  const lastFocusedElementRef = useRef<HTMLInputElement | HTMLTextAreaElement | null>(null);
+  const lastCursorPosRef = useRef<{ start: number; end: number } | null>(null);
+
+  const nodeData = (selectedNode?.data as FlowNodeData) || { label: '', type: 'flow_start', config: {} };
+  const cfg = { ...(nodeData.config || {}) };
   const isStart = nodeData.type === 'flow_start';
   const isEnd = nodeData.type === 'flow_end';
   const isMarker = isStart || isEnd;
-  const subtype = nodeData.type.replace('general_', '');
+  const subtype = (nodeData.type || '').replace('general_', '');
   const isAi = nodeData.type === 'ai_ollama';
   const isAgent = nodeData.type === 'agent_basic';
 
+  // 현재 노드가 가진 텍스트형 속성 목록 정의 (클릭/드래그 변수 삽입 대상)
+  const nodeTextFields = useMemo((): { key: string; label: string }[] => {
+    switch (nodeData.type) {
+      case 'general_keyboard_type':
+        return [{ key: 'text', label: isEn ? 'Text to Type' : '입력할 텍스트' }];
+      case 'general_keyboard_hotkey':
+        return [{ key: 'keys', label: isEn ? 'Shortcut Keys' : '단축키 조합' }];
+      case 'general_clipboard_copy':
+        return [{ key: 'text', label: isEn ? 'Clipboard Text' : '복사할 텍스트' }];
+      case 'general_file_read':
+        return [{ key: 'file_path', label: isEn ? 'File Path' : '읽어올 파일 경로' }];
+      case 'general_file_write':
+        return [
+          { key: 'content', label: isEn ? 'File Content' : '파일에 쓸 입력값' },
+          { key: 'file_path', label: isEn ? 'File Path' : '저장할 파일 경로' },
+        ];
+      case 'general_message_box':
+        return [
+          { key: 'message', label: isEn ? 'Message Body' : '메시지 본문' },
+          { key: 'title', label: isEn ? 'Dialog Title' : '대화상자 타이틀' },
+        ];
+      case 'general_window_activate':
+      case 'general_window_maximize':
+      case 'general_window_minimize':
+      case 'general_window_close':
+        return [{ key: 'window_title', label: isEn ? 'Window Title' : '대상 창 제목' }];
+      case 'general_launch_program':
+        return [
+          { key: 'program_path', label: isEn ? 'Program Path' : '프로그램 경로' },
+          { key: 'arguments', label: isEn ? 'Arguments' : '실행 인자' },
+          { key: 'working_dir', label: isEn ? 'Working Dir' : '작업 폴더' },
+        ];
+      case 'general_close_program':
+      case 'general_kill_process':
+        return [{ key: 'process_name', label: isEn ? 'Process Name' : '프로세스명' }];
+      case 'general_screenshot':
+        return [{ key: 'file_path', label: isEn ? 'Save File Path' : '저장 파일 경로' }];
+      case 'ai_ollama':
+      case 'agent_basic':
+        return [
+          { key: 'prompt', label: isEn ? 'Prompt' : '지시 프롬프트' },
+          { key: 'system_prompt', label: isEn ? 'System Prompt' : '시스템 프롬프트' },
+        ];
+      default:
+        return [];
+    }
+  }, [nodeData.type, isEn]);
+
+  // 노드 선택 변경 시 기본 활성 텍스트 필드 초기화
+  useEffect(() => {
+    setOutVarError(null);
+    setNewOutVarInput('');
+    setShowDeclareInline(false);
+    lastFocusedElementRef.current = null;
+    lastCursorPosRef.current = null;
+    if (nodeTextFields.length > 0) {
+      setActiveTextKey(nodeTextFields[0].key);
+    } else {
+      setActiveTextKey('');
+    }
+  }, [selectedNode?.id, nodeTextFields]);
+
   const handleLabelChange = (newLabel: string) => {
+    if (!selectedNode) return;
     onUpdateNodeData(selectedNode.id, newLabel, cfg);
   };
 
   const handleConfigChange = (key: string, val: any) => {
+    if (!selectedNode) return;
     const updated = { ...cfg, [key]: val };
     onUpdateNodeData(selectedNode.id, nodeData.label, updated);
   };
 
   const handleMultiConfigChange = (patch: Record<string, any>) => {
+    if (!selectedNode) return;
     const updated = { ...cfg, ...patch };
     onUpdateNodeData(selectedNode.id, nodeData.label, updated);
   };
+
+  // 지정한 텍스트 설정 필드에 {{변수명}} 토큰 삽입
+  const insertVariableToken = (varName: string, explicitKey?: string) => {
+    if (!selectedNode) return;
+    const targetKey =
+      explicitKey ||
+      activeTextKey ||
+      (nodeTextFields.length > 0 ? nodeTextFields[0].key : '');
+    if (!targetKey) return;
+
+    const token = `{{${varName}}}`;
+    const currentStr = String(cfg[targetKey] ?? '');
+
+    let nextStr = `${currentStr}${token}`;
+    if (
+      !explicitKey &&
+      lastFocusedElementRef.current &&
+      lastCursorPosRef.current &&
+      lastFocusedElementRef.current.value === currentStr
+    ) {
+      const { start, end } = lastCursorPosRef.current;
+      nextStr = currentStr.slice(0, start) + token + currentStr.slice(end);
+      const nextCursor = start + token.length;
+      lastCursorPosRef.current = { start: nextCursor, end: nextCursor };
+    }
+
+    handleConfigChange(targetKey, nextStr);
+  };
+
+  // 하단 VariableManagerPanel에서 변수 칩 클릭 시 현재 활성 텍스트 필드에 자동 삽입
+  const prevTriggerTimeRef = useRef<number>(0);
+  useEffect(() => {
+    if (
+      externalInsertTrigger &&
+      externalInsertTrigger.timestamp > prevTriggerTimeRef.current &&
+      selectedNode &&
+      nodeTextFields.length > 0
+    ) {
+      prevTriggerTimeRef.current = externalInsertTrigger.timestamp;
+      insertVariableToken(externalInsertTrigger.varName);
+    }
+  }, [externalInsertTrigger]);
+
+  // 현재 노드에서 참조 중인 {{변수}} 중 미선언 변수 추출
+  const undeclaredReferencedVars = useMemo(() => {
+    if (!selectedNode || isMarker) return [];
+    const usage = analyzeNodeVariableUsage(selectedNode);
+    const declaredSet = new Set(variables.map((v) => v.name));
+    return usage.referencedVars.filter(
+      (refName) => !declaredSet.has(refName) && !isSystemVariable(refName)
+    );
+  }, [selectedNode, cfg, variables, isMarker]);
+
+  // Inspector 내부 입력창 포커스/커서 위치 추적
+  const handleInspectorSelectOrFocus = (e: React.SyntheticEvent) => {
+    const target = e.target as HTMLElement;
+    if (target.tagName !== 'INPUT' && target.tagName !== 'TEXTAREA') return;
+    const inputEl = target as HTMLInputElement | HTMLTextAreaElement;
+    if (inputEl.type === 'number' || inputEl.type === 'checkbox' || inputEl.type === 'range') {
+      return;
+    }
+
+    const explicitAttrKey = inputEl.getAttribute('data-config-key');
+    if (explicitAttrKey) {
+      setActiveTextKey(explicitAttrKey);
+      lastFocusedElementRef.current = inputEl;
+      lastCursorPosRef.current = {
+        start: inputEl.selectionStart ?? inputEl.value.length,
+        end: inputEl.selectionEnd ?? inputEl.value.length,
+      };
+      return;
+    }
+
+    // 값 매칭으로 어느 텍스트 속성인지 역추적
+    const matchedField = nodeTextFields.find(
+      (f) => String(cfg[f.key] ?? '') === inputEl.value
+    );
+    if (matchedField) {
+      setActiveTextKey(matchedField.key);
+      lastFocusedElementRef.current = inputEl;
+      lastCursorPosRef.current = {
+        start: inputEl.selectionStart ?? inputEl.value.length,
+        end: inputEl.selectionEnd ?? inputEl.value.length,
+      };
+    }
+  };
+
+  // Inspector 내 텍스트 입력창으로 변수 칩을 드래그 앤 드롭했을 때 처리
+  const handleInspectorDropCapture = (e: React.DragEvent) => {
+    const droppedVar =
+      e.dataTransfer.getData('application/x-praxis-variable') ||
+      (() => {
+        const plain = e.dataTransfer.getData('text/plain') || '';
+        const m = plain.match(/^\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}$/);
+        return m ? m[1] : '';
+      })();
+
+    if (!droppedVar) return;
+    e.preventDefault();
+    e.stopPropagation();
+
+    const target = e.target as HTMLElement;
+    if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) {
+      const inputEl = target as HTMLInputElement | HTMLTextAreaElement;
+      const attrKey = inputEl.getAttribute('data-config-key');
+      const matchedKey =
+        attrKey ||
+        nodeTextFields.find((f) => String(cfg[f.key] ?? '') === inputEl.value)?.key ||
+        activeTextKey;
+
+      if (matchedKey) {
+        const curVal = String(cfg[matchedKey] ?? '');
+        const pos = inputEl.selectionStart ?? curVal.length;
+        const token = `{{${droppedVar}}}`;
+        const nextVal = curVal.slice(0, pos) + token + curVal.slice(pos);
+        setActiveTextKey(matchedKey);
+        handleConfigChange(matchedKey, nextVal);
+        return;
+      }
+    }
+
+    insertVariableToken(droppedVar);
+  };
+
+  // 출력 변수(output_variable) 전용 선언 검사 및 선택 컴포넌트 렌더러
+  const renderOutputVariableSelector = (
+    defaultVarName: string,
+    expectedTypes: VariableType[] = ['string', 'json'],
+    accentClass: string = 'border-emerald-700 text-emerald-300'
+  ) => {
+    const currentOutVar = String(cfg.output_variable ?? defaultVarName).trim();
+    const declaredObj = variables.find((v) => v.name === currentOutVar);
+    const isDeclared = !!declaredObj;
+    const isSysVar = isSystemVariable(currentOutVar);
+    const isTypeCompatible = !declaredObj || expectedTypes.includes(declaredObj.type);
+    const recommendedType: VariableType = expectedTypes[0] || 'string';
+
+    const handleQuickDeclareCurrent = (targetName: string) => {
+      const trimmed = targetName.trim();
+      const fmtCheck = validateVariableNameFormat(trimmed);
+      if (!fmtCheck.valid) {
+        setOutVarError(fmtCheck.reason || '올바르지 않은 변수명입니다.');
+        return;
+      }
+      setOutVarError(null);
+      if (onDeclareVariable && !variables.some((v) => v.name === trimmed)) {
+        onDeclareVariable({
+          name: trimmed,
+          type: recommendedType,
+          defaultValue: getDefaultValueForType(recommendedType),
+          description: `${nodeData.label} 출력 변수`,
+        });
+      }
+      handleConfigChange('output_variable', trimmed);
+      setNewOutVarInput('');
+      setShowDeclareInline(false);
+    };
+
+    return (
+      <div className="space-y-2 mt-1">
+        {/* 1) 선언된 변수 드롭다운 선택기 (미선언 변수 입력 원천 차단) */}
+        <div className="flex items-center gap-1.5">
+          <select
+            value={isDeclared && isTypeCompatible ? currentOutVar : ''}
+            onChange={(e) => {
+              setOutVarError(null);
+              if (e.target.value) {
+                handleConfigChange('output_variable', e.target.value);
+              }
+            }}
+            className={`flex-1 px-2.5 py-1.5 text-xs bg-slate-950 border rounded-lg font-mono focus:outline-none ${
+              isDeclared && isTypeCompatible
+                ? accentClass
+                : 'border-rose-600/80 text-rose-300 bg-rose-950/20'
+            }`}
+          >
+            <option value="" disabled>
+              {t('variables.selectOutputVarPlaceholder')}
+            </option>
+            {variables.map((v) => {
+              const compatible = expectedTypes.includes(v.type);
+              return (
+                <option key={v.name} value={v.name} disabled={!compatible}>
+                  {v.name} ({v.type})
+                  {!compatible ? ' - 타입 불일치' : ''}
+                </option>
+              );
+            })}
+          </select>
+
+          <button
+            type="button"
+            onClick={() => {
+              setShowDeclareInline(!showDeclareInline);
+              setOutVarError(null);
+            }}
+            className="px-2 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-[11px] font-medium flex items-center gap-1 shrink-0 transition-colors"
+            title="새 출력 변수를 즉시 선언하고 이 노드에 지정합니다"
+          >
+            <Plus className="w-3.5 h-3.5 text-emerald-400" />
+            <span>{isEn ? 'Declare' : '변수 선언'}</span>
+          </button>
+        </div>
+
+        {/* 2) 인라인 신규 출력 변수 선언 폼 */}
+        {showDeclareInline && (
+          <div className="p-2.5 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
+            <div className="text-[10px] text-slate-400 font-medium">
+              {isEn
+                ? `Declare new '${recommendedType}' variable & assign:`
+                : `새 출력 변수 선언 (${recommendedType} 타입 자동 지정):`}
+            </div>
+            <div className="flex items-center gap-1.5">
+              <input
+                type="text"
+                value={newOutVarInput}
+                onChange={(e) => {
+                  setNewOutVarInput(e.target.value);
+                  setOutVarError(null);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    handleQuickDeclareCurrent(newOutVarInput);
+                  }
+                }}
+                placeholder={defaultVarName}
+                className="flex-1 px-2 py-1 text-xs font-mono bg-slate-900 border border-slate-700 rounded text-emerald-300 focus:outline-none focus:border-emerald-500"
+              />
+              <button
+                type="button"
+                onClick={() => handleQuickDeclareCurrent(newOutVarInput)}
+                className="px-2.5 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold shrink-0"
+              >
+                {isEn ? 'Add' : '선언 및 적용'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* 3) 미선언 변수이거나 타입 불일치 시 경고 및 원클릭 해결 버튼 */}
+        {(!isDeclared || !isTypeCompatible || isSysVar) && (
+          <div className="p-2.5 rounded-xl bg-rose-950/40 border border-rose-800/70 space-y-1.5 text-[11px]">
+            <div className="flex items-start gap-1.5 text-rose-300 font-medium leading-tight">
+              <AlertCircle className="w-3.5 h-3.5 text-rose-400 shrink-0 mt-0.5" />
+              <span>
+                {isSysVar
+                  ? `'${currentOutVar}' 변수는 읽기 전용 시스템 변수이므로 출력 변수로 지정할 수 없습니다.`
+                  : !isDeclared
+                  ? `현재 지정된 '${currentOutVar || '(공란)'}' 변수가 선언되지 않았습니다. 선언되지 않은 변수는 사용할 수 없습니다.`
+                  : `'${currentOutVar}' 변수의 타입(${declaredObj?.type})이 이 노드의 출력 타입(${expectedTypes.join(
+                      '/'
+                    )})과 일치하지 않습니다.`}
+              </span>
+            </div>
+            {!isDeclared && !isSysVar && currentOutVar && (
+              <button
+                type="button"
+                onClick={() => handleQuickDeclareCurrent(currentOutVar)}
+                className="w-full py-1 px-2 rounded-lg bg-emerald-600/90 hover:bg-emerald-500 text-white text-[11px] font-semibold flex items-center justify-center gap-1 transition-colors"
+              >
+                <Plus className="w-3 h-3" />
+                <span>
+                  {t('variables.declareNowBtn', {
+                    name: currentOutVar,
+                    type: recommendedType,
+                  })}
+                </span>
+              </button>
+            )}
+          </div>
+        )}
+
+        {outVarError && (
+          <div className="text-[10px] text-rose-400 flex items-center gap-1 px-1">
+            <AlertCircle className="w-3 h-3 shrink-0" />
+            <span>{outVarError}</span>
+          </div>
+        )}
+
+        <div className="text-[10px] text-slate-500 leading-tight">
+          🔒 {t('variables.outputVarHelp')}
+        </div>
+      </div>
+    );
+  };
+
+  if (!selectedNode) return null;
 
   const handleBrowseFileForKey = async (configKey: string, acceptExts: string = '*') => {
     if (window.electronAPI?.openFileDialog) {
@@ -149,7 +525,19 @@ export const PropertyInspector: React.FC<PropertyInspectorProps> = ({
         </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+      <div
+        className="flex-1 overflow-y-auto p-4 space-y-4"
+        onFocusCapture={handleInspectorSelectOrFocus}
+        onClickCapture={handleInspectorSelectOrFocus}
+        onKeyUpCapture={handleInspectorSelectOrFocus}
+        onDragOverCapture={(e) => {
+          if (e.dataTransfer.types.includes('application/x-praxis-variable')) {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'copy';
+          }
+        }}
+        onDropCapture={handleInspectorDropCapture}
+      >
         {/* 노드 이름 */}
         <div>
           <label className="block text-xs font-medium text-slate-400 mb-1">{t('inspector.nodeNameLabel')}</label>
@@ -160,6 +548,109 @@ export const PropertyInspector: React.FC<PropertyInspectorProps> = ({
             className="w-full px-3 py-1.5 text-xs bg-slate-950 border border-slate-700 rounded-lg text-slate-200 focus:outline-none focus:border-blue-500"
           />
         </div>
+
+        {/* 텍스트 속성을 가진 노드에 대해 클릭/드래그 변수 간편 삽입 바 제공 */}
+        {!isMarker && nodeTextFields.length > 0 && (
+          <div className="p-2.5 rounded-xl bg-slate-950/90 border border-emerald-900/50 space-y-2">
+            <div className="flex items-center justify-between gap-1">
+              <span className="text-[11px] font-semibold text-emerald-400 flex items-center gap-1">
+                <Variable className="w-3.5 h-3.5" />
+                {t('variables.quickInsertLabel')}
+              </span>
+              {nodeTextFields.length > 1 ? (
+                <select
+                  value={activeTextKey}
+                  onChange={(e) => setActiveTextKey(e.target.value)}
+                  className="px-1.5 py-0.5 text-[10px] bg-slate-900 border border-slate-700 rounded text-slate-300 focus:outline-none"
+                  title="변수를 삽입할 대상 속성"
+                >
+                  {nodeTextFields.map((f) => (
+                    <option key={f.key} value={f.key}>
+                      대상: {f.label}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <span className="text-[10px] text-slate-400">
+                  대상: {nodeTextFields[0].label}
+                </span>
+              )}
+            </div>
+
+            {/* 선언 변수 + 주요 시스템 변수 칩 목록 */}
+            <div className="flex flex-wrap gap-1 max-h-24 overflow-y-auto custom-scrollbar">
+              {variables.map((v) => (
+                <button
+                  key={v.name}
+                  type="button"
+                  draggable
+                  onDragStart={(e) => {
+                    e.dataTransfer.setData('application/x-praxis-variable', v.name);
+                    e.dataTransfer.setData('text/plain', `{{${v.name}}}`);
+                    e.dataTransfer.effectAllowed = 'copy';
+                  }}
+                  onClick={() => insertVariableToken(v.name)}
+                  className="flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-emerald-950/70 hover:bg-emerald-900 border border-emerald-700/60 text-[10px] font-mono text-emerald-200 cursor-pointer transition-colors"
+                  title={`클릭 또는 드래그하여 {{${v.name}}} (${v.type}) 삽입`}
+                >
+                  <GripVertical className="w-2.5 h-2.5 opacity-60" />
+                  <span>{`{{${v.name}}}`}</span>
+                </button>
+              ))}
+              {SYSTEM_VARIABLES.slice(0, 4).map((sv) => (
+                <button
+                  key={sv.name}
+                  type="button"
+                  draggable
+                  onDragStart={(e) => {
+                    e.dataTransfer.setData('application/x-praxis-variable', sv.name);
+                    e.dataTransfer.setData('text/plain', `{{${sv.name}}}`);
+                    e.dataTransfer.effectAllowed = 'copy';
+                  }}
+                  onClick={() => insertVariableToken(sv.name)}
+                  className="flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-slate-900 hover:bg-slate-800 border border-slate-700 text-[10px] font-mono text-slate-300 cursor-pointer transition-colors"
+                  title={`${sv.description} (시스템 변수)`}
+                >
+                  <span>{`{{${sv.name}}}`}</span>
+                </button>
+              ))}
+            </div>
+
+            {/* 텍스트 내 미선언 {{변수}} 참조 감지 시 즉시 선언 경고 표시 */}
+            {undeclaredReferencedVars.length > 0 && (
+              <div className="p-2 rounded-lg bg-rose-950/50 border border-rose-800/70 space-y-1.5 text-[10px]">
+                <div className="text-rose-300 font-medium flex items-start gap-1">
+                  <AlertCircle className="w-3.5 h-3.5 text-rose-400 shrink-0 mt-0.5" />
+                  <span>
+                    선언되지 않은 변수 참조 감지: {undeclaredReferencedVars.map((v) => `{{${v}}}`).join(', ')}
+                  </span>
+                </div>
+                <div className="flex flex-wrap gap-1">
+                  {undeclaredReferencedVars.map((uVar) => (
+                    <button
+                      key={uVar}
+                      type="button"
+                      onClick={() => {
+                        if (onDeclareVariable && !validateVariableNameFormat(uVar)) {
+                          onDeclareVariable({
+                            name: uVar,
+                            type: 'string',
+                            defaultValue: '',
+                            description: `${nodeData.label} 참조 변수`,
+                          });
+                        }
+                      }}
+                      className="px-2 py-0.5 rounded bg-emerald-700 hover:bg-emerald-600 text-white font-semibold flex items-center gap-0.5"
+                    >
+                      <Plus className="w-2.5 h-2.5" />
+                      <span>'{uVar}' 변수 즉시 선언</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="border-t border-slate-800 pt-3">
           <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-3">
@@ -2412,13 +2903,7 @@ export const PropertyInspector: React.FC<PropertyInspectorProps> = ({
                 <label className="text-[11px] text-slate-400 font-medium">
                   {isEn ? 'Variable Name to Store Clipboard Text' : '저장할 변수명 (Output Variable)'}
                 </label>
-                <input
-                  type="text"
-                  value={cfg.output_variable || 'clipboard_text'}
-                  onChange={(e) => handleConfigChange('output_variable', e.target.value)}
-                  placeholder="clipboard_text"
-                  className="w-full px-2.5 py-1.5 text-xs bg-slate-950 border border-slate-700 rounded-lg text-violet-300 font-mono mt-1 focus:outline-none focus:border-violet-500"
-                />
+                {renderOutputVariableSelector('clipboard_text', ['string', 'json'], 'border-violet-700 text-violet-300')}
               </div>
               <div className="p-2.5 bg-violet-950/25 border border-violet-900/50 rounded-xl text-[10px] text-slate-300 leading-relaxed space-y-1">
                 <div className="font-semibold text-violet-300">
@@ -2443,6 +2928,7 @@ export const PropertyInspector: React.FC<PropertyInspectorProps> = ({
                 <div className="flex gap-1.5 mt-1">
                   <input
                     type="text"
+                    data-config-key="file_path"
                     value={cfg.file_path || ''}
                     onChange={(e) => handleConfigChange('file_path', e.target.value)}
                     placeholder={isEn ? 'e.g. C:\\Data\\memo.txt' : '예: C:\\Data\\memo.txt'}
@@ -2462,33 +2948,26 @@ export const PropertyInspector: React.FC<PropertyInspectorProps> = ({
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="text-[11px] text-slate-400">
-                    {isEn ? 'Text Encoding' : '파일 인코딩'}
-                  </label>
-                  <select
-                    value={cfg.encoding || 'utf-8'}
-                    onChange={(e) => handleConfigChange('encoding', e.target.value)}
-                    className="w-full px-2.5 py-1.5 text-xs bg-slate-950 border border-slate-700 rounded-lg text-slate-200 mt-1"
-                  >
-                    <option value="utf-8">UTF-8 ({isEn ? 'Default/Auto' : '기본/자동감지'})</option>
-                    <option value="cp949">CP949 / EUC-KR ({isEn ? 'Korean ANSI' : '한글 윈도우'})</option>
-                    <option value="utf-16">UTF-16</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="text-[11px] text-slate-400">
-                    {isEn ? 'Output Variable' : '저장할 변수명'}
-                  </label>
-                  <input
-                    type="text"
-                    value={cfg.output_variable || 'file_content'}
-                    onChange={(e) => handleConfigChange('output_variable', e.target.value)}
-                    placeholder="file_content"
-                    className="w-full px-2.5 py-1.5 text-xs bg-slate-950 border border-slate-700 rounded-lg text-emerald-300 font-mono mt-1"
-                  />
-                </div>
+              <div>
+                <label className="text-[11px] text-slate-400">
+                  {isEn ? 'Text Encoding' : '파일 인코딩'}
+                </label>
+                <select
+                  value={cfg.encoding || 'utf-8'}
+                  onChange={(e) => handleConfigChange('encoding', e.target.value)}
+                  className="w-full px-2.5 py-1.5 text-xs bg-slate-950 border border-slate-700 rounded-lg text-slate-200 mt-1"
+                >
+                  <option value="utf-8">UTF-8 ({isEn ? 'Default/Auto' : '기본/자동감지'})</option>
+                  <option value="cp949">CP949 / EUC-KR ({isEn ? 'Korean ANSI' : '한글 윈도우'})</option>
+                  <option value="utf-16">UTF-16</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="text-[11px] text-slate-400 font-medium">
+                  {isEn ? 'Output Variable' : '저장할 변수명 (Output Variable)'}
+                </label>
+                {renderOutputVariableSelector('file_content', ['string', 'json'], 'border-emerald-700 text-emerald-300')}
               </div>
             </div>
           )}
@@ -2503,6 +2982,7 @@ export const PropertyInspector: React.FC<PropertyInspectorProps> = ({
                 <div className="flex gap-1.5 mt-1">
                   <input
                     type="text"
+                    data-config-key="file_path"
                     value={cfg.file_path || ''}
                     onChange={(e) => handleConfigChange('file_path', e.target.value)}
                     placeholder={isEn ? 'e.g. C:\\Temp\\result_{{date}}.txt' : '예: C:\\Temp\\result_{{date}}.txt'}
@@ -2530,6 +3010,7 @@ export const PropertyInspector: React.FC<PropertyInspectorProps> = ({
                 </label>
                 <textarea
                   rows={4}
+                  data-config-key="content"
                   value={cfg.content ?? ''}
                   onChange={(e) => handleConfigChange('content', e.target.value)}
                   placeholder={isEn ? 'Enter text or {{variable}} to save...' : '직접 텍스트를 입력하거나 {{last_output}}, {{변수명}}을 입력하세요.'}
@@ -2573,6 +3054,7 @@ export const PropertyInspector: React.FC<PropertyInspectorProps> = ({
                 </label>
                 <input
                   type="text"
+                  data-config-key="title"
                   value={cfg.title ?? '알림'}
                   onChange={(e) => handleConfigChange('title', e.target.value)}
                   placeholder={isEn ? 'e.g. Notice, Confirmation' : '예: 알림, 작업 확인'}
@@ -2629,6 +3111,7 @@ export const PropertyInspector: React.FC<PropertyInspectorProps> = ({
                 </label>
                 <textarea
                   rows={3}
+                  data-config-key="message"
                   value={cfg.message ?? ''}
                   onChange={(e) => handleConfigChange('message', e.target.value)}
                   placeholder={isEn ? 'Enter message body ({{variable}} supported)...' : '대화상자에 표시할 본문을 입력하세요. ({{변수명}} 치환 가능)'}
@@ -2658,13 +3141,7 @@ export const PropertyInspector: React.FC<PropertyInspectorProps> = ({
                   <label className="text-[11px] text-slate-400 font-medium">
                     {isEn ? 'Boolean Output Variable Name' : '선택 결과(True/False) 저장 변수명'}
                   </label>
-                  <input
-                    type="text"
-                    value={cfg.output_variable || 'dialog_result'}
-                    onChange={(e) => handleConfigChange('output_variable', e.target.value)}
-                    placeholder="dialog_result"
-                    className="w-full px-2.5 py-1.5 text-xs bg-slate-950 border border-slate-700 rounded-lg text-amber-300 font-mono mt-1"
-                  />
+                  {renderOutputVariableSelector('dialog_result', ['boolean', 'string'], 'border-amber-700 text-amber-300')}
                 </div>
               )}
 
@@ -2760,6 +3237,7 @@ export const PropertyInspector: React.FC<PropertyInspectorProps> = ({
                 </label>
                 <textarea
                   rows={4}
+                  data-config-key="prompt"
                   value={cfg.prompt || ''}
                   onChange={(e) => handleConfigChange('prompt', e.target.value)}
                   placeholder={isEn ? 'e.g. Summarize the article in 3 sentences: {{last_output}}' : '예: 화면에 보이는 기사를 3줄로 요약해줘: {{last_output}}'}
@@ -2776,6 +3254,7 @@ export const PropertyInspector: React.FC<PropertyInspectorProps> = ({
                 </label>
                 <input
                   type="text"
+                  data-config-key="system_prompt"
                   value={cfg.system_prompt || ''}
                   onChange={(e) => handleConfigChange('system_prompt', e.target.value)}
                   placeholder={isEn ? 'e.g. You are an expert office automation assistant.' : '예: 너는 전문 사무 자동화 비서야.'}
@@ -2784,16 +3263,10 @@ export const PropertyInspector: React.FC<PropertyInspectorProps> = ({
               </div>
 
               <div>
-                <label className="text-[11px] text-slate-400">
+                <label className="text-[11px] text-slate-400 font-medium">
                   {isEn ? 'Output Variable Name' : '출력 저장 변수명'}
                 </label>
-                <input
-                  type="text"
-                  value={cfg.output_variable || 'ai_output'}
-                  onChange={(e) => handleConfigChange('output_variable', e.target.value)}
-                  placeholder="ai_output"
-                  className="w-full px-2.5 py-1 text-xs bg-slate-950 border border-slate-700 rounded text-purple-300 font-mono mt-1"
-                />
+                {renderOutputVariableSelector('ai_output', ['string', 'json'], 'border-purple-700 text-purple-300')}
               </div>
 
               <div>
@@ -2903,6 +3376,7 @@ export const PropertyInspector: React.FC<PropertyInspectorProps> = ({
                 </label>
                 <textarea
                   rows={4}
+                  data-config-key="prompt"
                   value={cfg.prompt || ''}
                   onChange={(e) => handleConfigChange('prompt', e.target.value)}
                   placeholder={isEn ? "e.g. Open browser, check today's top news and summarize in 3 lines" : '예: 브라우저를 열고 오늘 주요 뉴스를 확인해서 3줄로 요약해줘'}
@@ -2941,6 +3415,7 @@ export const PropertyInspector: React.FC<PropertyInspectorProps> = ({
                 </label>
                 <textarea
                   rows={2}
+                  data-config-key="system_prompt"
                   value={cfg.system_prompt || ''}
                   onChange={(e) => handleConfigChange('system_prompt', e.target.value)}
                   placeholder={isEn ? '예: 당신은 정밀한 데스크톱 사무 자동화 전문 에이전트입니다.' : '예: 당신은 정밀한 데스크톱 사무 자동화 전문 에이전트입니다.'}
@@ -3077,32 +3552,25 @@ export const PropertyInspector: React.FC<PropertyInspectorProps> = ({
 
               {/* 기타 파라미터 (최대 루프, 출력 변수, Temperature) */}
               <div className="border-t border-slate-800 pt-3 space-y-3">
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label className="text-[11px] text-slate-400">
-                      {isEn ? 'Max Step Loops' : '최대 반복 루프'}
-                    </label>
-                    <input
-                      type="number"
-                      min="1"
-                      max="30"
-                      value={cfg.max_steps ?? 10}
-                      onChange={(e) => handleConfigChange('max_steps', Number(e.target.value))}
-                      className="w-full px-2.5 py-1 text-xs bg-slate-950 border border-slate-700 rounded text-slate-200 mt-1"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[11px] text-slate-400">
-                      {isEn ? 'Output Variable Name' : '출력 저장 변수명'}
-                    </label>
-                    <input
-                      type="text"
-                      value={cfg.output_variable || 'agent_result'}
-                      onChange={(e) => handleConfigChange('output_variable', e.target.value)}
-                      placeholder="agent_result"
-                      className="w-full px-2.5 py-1 text-xs bg-slate-950 border border-slate-700 rounded text-indigo-300 font-mono mt-1"
-                    />
-                  </div>
+                <div>
+                  <label className="text-[11px] text-slate-400">
+                    {isEn ? 'Max Step Loops' : '최대 반복 루프'}
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="30"
+                    value={cfg.max_steps ?? 10}
+                    onChange={(e) => handleConfigChange('max_steps', Number(e.target.value))}
+                    className="w-full px-2.5 py-1 text-xs bg-slate-950 border border-slate-700 rounded text-slate-200 mt-1"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-[11px] text-slate-400 font-medium">
+                    {isEn ? 'Output Variable Name' : '출력 저장 변수명'}
+                  </label>
+                  {renderOutputVariableSelector('agent_result', ['string', 'json'], 'border-indigo-700 text-indigo-300')}
                 </div>
 
                 <div>

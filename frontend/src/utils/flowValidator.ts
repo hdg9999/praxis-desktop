@@ -1,4 +1,10 @@
 import { Node, Edge, Connection } from '@xyflow/react';
+import { WorkflowVariable, FlowNodeData } from '../types';
+import {
+  SYSTEM_VARIABLE_NAMES,
+  analyzeNodeVariableUsage,
+  normalizeVariableValue,
+} from './variableUtils';
 
 export interface FlowValidationResult {
   isValid: boolean;
@@ -87,18 +93,22 @@ export function checkConnectionValidity(
 }
 
 /**
- * 전체 워크플로우 그래프의 무결성 및 유효성 검사
+ * 전체 워크플로우 그래프의 무결성 및 유효성 검사 (변수 선언 및 타입 일치성 검사 포함)
  */
 export function validateFlow(
   nodes: Node[],
   edges: Edge[],
-  t?: (key: string, params?: Record<string, any>) => string
+  t?: (key: string, params?: Record<string, any>) => string,
+  variables?: WorkflowVariable[]
 ): FlowValidationResult {
   const errors: string[] = [];
   const warnings: string[] = [];
 
   const tr = (key: string, fallback: string, params?: Record<string, any>) => {
-    if (t) return t(key, params);
+    if (t) {
+      const translated = t(key, params);
+      if (translated && translated !== key) return translated;
+    }
     if (!params) return fallback;
     let res = fallback;
     Object.entries(params).forEach(([k, v]) => {
@@ -152,7 +162,6 @@ export function validateFlow(
     for (const nxt of neighbors) {
       const state = visitedState.get(nxt);
       if (state === 'visiting') {
-        // 사이클 감지
         hasCycle = true;
         const cycleStartIndex = path.indexOf(nxt);
         if (cycleStartIndex !== -1) {
@@ -233,6 +242,115 @@ export function validateFlow(
     warnings.push(tr('validation.noIntermediateNodes', '시작과 끝 노드 사이에 실행할 동작(스킬 노드)이 없습니다.'));
   }
 
+  // 7. 워크플로우 변수 선언 및 타입 정합성 검사 (variables가 제공된 경우)
+  if (variables !== undefined) {
+    const varMap = new Map<string, WorkflowVariable>();
+    for (const v of variables) {
+      const trimmedName = (v.name || '').trim();
+      if (!trimmedName) continue;
+      varMap.set(trimmedName, v);
+
+      const norm = normalizeVariableValue(v.type, v.defaultValue);
+      if (!norm.isValid) {
+        errors.push(
+          tr(
+            'validation.invalidVariableDefault',
+            `변수 '${trimmedName}'의 초기값이 선언된 타입(${v.type})과 일치하지 않습니다: ${norm.error}`,
+            { name: trimmedName, type: v.type, reason: norm.error || '' }
+          )
+        );
+      }
+    }
+
+    const nodeMap = new Map<string, Node>(nodes.map((n) => [n.id, n]));
+    // 활성 실행 경로에 있는 노드(또는 전체 노드)의 변수 사용 검증
+    const nodesToCheck = activeNodeIds.length > 0
+      ? activeNodeIds.map((id) => nodeMap.get(id)).filter((n): n is Node => !!n)
+      : nodes;
+
+    for (const node of nodesToCheck) {
+      if (node.type === 'flow_start' || node.type === 'flow_end') continue;
+      const nodeData = (node.data as unknown as FlowNodeData) || { label: node.id, type: node.type as any, config: {} };
+      const nodeLabel = nodeData.label || node.id;
+      const usage = analyzeNodeVariableUsage(node);
+
+      // (a) 출력 변수(output_variable) 선언 여부 및 타입 호환성 검사
+      if (usage.outputVar !== null) {
+        if (!usage.outputVar) {
+          errors.push(
+            tr(
+              'validation.emptyOutputVar',
+              `[${nodeLabel}] 출력 저장 변수명이 비어 있습니다. 선언된 변수를 선택해 주세요.`,
+              { node: nodeLabel }
+            )
+          );
+        } else if (SYSTEM_VARIABLE_NAMES.has(usage.outputVar)) {
+          errors.push(
+            tr(
+              'validation.readonlyOutputVar',
+              `[${nodeLabel}] 시스템 내장 변수('${usage.outputVar}')에는 출력값을 덮어쓸 수 없습니다.`,
+              { node: nodeLabel, varName: usage.outputVar }
+            )
+          );
+        } else if (!varMap.has(usage.outputVar)) {
+          errors.push(
+            tr(
+              'validation.undeclaredOutputVar',
+              `[${nodeLabel}] 선언되지 않은 출력 변수 '${usage.outputVar}'이(가) 지정되었습니다. 하단 변수 관리 패널에서 먼저 변수를 선언해 주세요.`,
+              { node: nodeLabel, varName: usage.outputVar }
+            )
+          );
+        } else {
+          const declaredVar = varMap.get(usage.outputVar)!;
+          if (
+            usage.expectedOutputTypes.length > 0 &&
+            !usage.expectedOutputTypes.includes(declaredVar.type)
+          ) {
+            errors.push(
+              tr(
+                'validation.incompatibleOutputVarType',
+                `[${nodeLabel}] 출력 변수 '${usage.outputVar}'의 타입(${declaredVar.type})이 노드 출력 타입(${usage.expectedOutputTypes.join('/')})과 일치하지 않습니다.`,
+                {
+                  node: nodeLabel,
+                  varName: usage.outputVar,
+                  varType: declaredVar.type,
+                  expected: usage.expectedOutputTypes.join('/'),
+                }
+              )
+            );
+          }
+        }
+      }
+
+      // (b) 템플릿 참조 변수 {{변수명}} 선언 여부 검사
+      for (const refVar of usage.referencedVars) {
+        if (!SYSTEM_VARIABLE_NAMES.has(refVar) && !varMap.has(refVar)) {
+          errors.push(
+            tr(
+              'validation.undeclaredRefVar',
+              `[${nodeLabel}] 선언되지 않은 변수 '{{${refVar}}}'을(를) 참조하고 있습니다.`,
+              { node: nodeLabel, varName: refVar }
+            )
+          );
+        }
+      }
+
+      // (c) 숫자 전용 속성에 참조된 변수의 타입 검사
+      for (const nf of usage.numericFieldVars) {
+        const declaredVar = varMap.get(nf.varName);
+        if (declaredVar && declaredVar.type !== 'number' && declaredVar.type !== 'string') {
+          errors.push(
+            tr(
+              'validation.incompatibleNumericFieldVar',
+              `[${nodeLabel}] 숫자 속성(${nf.field})에 숫자/문자열이 아닌 '${declaredVar.type}' 타입 변수 '{{${nf.varName}}}'이(가) 사용되었습니다.`,
+              { node: nodeLabel, field: nf.field, varName: nf.varName, varType: declaredVar.type }
+            )
+          );
+        }
+      }
+    }
+  }
+
   const isValid = errors.length === 0 && reachedEnd;
 
   return {
@@ -247,3 +365,4 @@ export function validateFlow(
     endNodeId: endNode?.id,
   };
 }
+
