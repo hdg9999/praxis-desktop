@@ -1,6 +1,6 @@
 import React, { memo } from 'react';
 import { Handle, Position, NodeProps, useReactFlow } from '@xyflow/react';
-import { Bot, Wrench, Camera, Variable, X } from 'lucide-react';
+import { Bot, Wrench, Camera, Variable, X, Layers } from 'lucide-react';
 import { FlowNodeData } from '../../types';
 import { useI18n } from '../../i18n';
 
@@ -88,6 +88,10 @@ const AgentNode: React.FC<NodeProps> = ({ id, data, selected }) => {
             Vision
           </span>
         )}
+        <span className="inline-flex items-center gap-1 text-[10px] bg-cyan-950/50 text-cyan-300 border border-cyan-800/60 px-1.5 py-0.5 rounded font-mono">
+          <Layers className="w-2.5 h-2.5 text-cyan-400" />
+          {cfg.num_ctx ? (cfg.num_ctx >= 1024 ? `${Math.round(cfg.num_ctx / 1024)}k ctx` : `${cfg.num_ctx} ctx`) : '8k ctx'}
+        </span>
       </div>
 
       {/* 출력 변수 */}

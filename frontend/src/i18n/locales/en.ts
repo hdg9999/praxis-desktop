@@ -51,7 +51,7 @@ export const en: TranslationType = {
     flowSettings: 'Workflow Settings',
     flowSettingsTooltip: 'Current Workflow Global Settings (Name, Description, Execution Speed, Default LLM)',
     cannotRunTooltip: 'Cannot run workflow:\n{errors}',
-    runFlowTooltip: 'Run Workflow',
+    runFlowTooltip: 'Run Workflow (Shortcut: F5)',
   },
 
   // 실시간 유효성 검사 (Validation)
@@ -111,6 +111,7 @@ export const en: TranslationType = {
 
   // 스킬 노드 아이템 (Skill Registry Items)
   skills: {
+    title: 'Skill Nodes',
     collapseAll: 'Collapse All',
     expandAll: 'Expand All',
     searchPlaceholder: 'Search skills (e.g. click, keyboard, ollama)',
@@ -392,13 +393,16 @@ export const en: TranslationType = {
       goalLabel: 'Goal / User Prompt',
       goalPlaceholder: 'Specify the objective for the agent. e.g. "Open Notepad and type a greetings message"',
       includeScreenLabel: 'Include PC screen screenshot at runtime (Recommended for Vision models)',
-      systemPromptLabel: 'System Instructions',
-      systemPromptPlaceholder: 'Additional rules or behavioral guidelines for the agent.',
+      systemPromptLabel: 'System Prompt (Optional)',
+      systemPromptPlaceholder: 'You are an expert desktop automation AI agent. Use the provided tools to perform tasks, and once finished or relevant information is gathered, stop tool calls and provide a clear, helpful final response to the user.',
+      systemPromptHelp: 'When left blank, the above default system instructions are automatically applied.',
       skillModeLabel: 'Available Skills',
       skillPresetAll: 'All Standard RPA Skills',
       skillPresetCustom: 'Custom Skill Selection',
       maxStepsLabel: 'Max Autonomous Steps',
       maxStepsHelp: 'Maximum tool calls to prevent infinite loops (1~30 steps)',
+      numCtxLabel: 'Context Window Size',
+      numCtxHelp: 'Maximum context size in tokens for this agent (Default: 8192). Recommend 16k~32k+ for long automation tasks.',
     },
   },
 
@@ -478,8 +482,11 @@ export const en: TranslationType = {
   workflowTab: {
     tabSkills: 'Skills',
     tabWorkflows: 'Workflows',
+    title: 'Saved Workflows',
+    subtitle: 'Click to load into main canvas',
     searchPlaceholder: 'Search saved workflows...',
     newWorkflowBtn: 'New Workflow',
+    newBtn: 'New',
     noDescription: 'No description provided for this workflow.',
     unsavedBadge: 'Unsaved',
     activeBadge: 'Editing',
@@ -504,6 +511,8 @@ export const en: TranslationType = {
     defaultModelLabel: 'Default LLM Model (Ollama)',
     defaultModelPlaceholder: 'e.g. llama3, qwen2.5:7b (Uses first installed model if empty)',
     defaultModelHelp: 'Default model name automatically applied to newly added AI Query (Ollama) and Basic Agent nodes.',
+    defaultNumCtxLabel: 'Default LLM Context Size',
+    defaultNumCtxHelp: 'Default context window size (tokens) applied to agent nodes. (Default: 8192, 8k~64k recommended)',
     applyModelToExistingBtn: 'Apply to All AI Nodes in Current Workflow',
     appliedCountMsg: 'Applied default model to {count} AI/Agent node(s).',
     saveBtn: 'Apply Global Settings',

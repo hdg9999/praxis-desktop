@@ -19,6 +19,13 @@ from app.nodes.agent_tools import get_agent_tools_schema, execute_agent_tool
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_AGENT_SYSTEM_PROMPT = (
+    "당신은 데스크톱 자동화 전문 AI 에이전트입니다. "
+    "주어진 도구(스킬)를 활용하여 작업을 수행하며, "
+    "필요한 작업을 마치거나 정보를 획득하면 도구 호출을 종료하고 "
+    "최종 결과를 사용자에게 한국어로 명확하고 친절하게 설명해야 합니다."
+)
+
 class AgentNode(BaseNode):
     """
     신규 AI 코어 스킬 노드: '기본 에이전트'
@@ -43,6 +50,7 @@ class AgentNode(BaseNode):
         self.custom_skills: List[str] = config.get("custom_skills", [])
         self.max_steps: int = int(config.get("max_steps", 10))
         self.temperature: float = float(config.get("temperature", 0.3))
+        self.num_ctx: int = int(config.get("num_ctx", 8192))
         self.output_variable: str = config.get("output_variable", "agent_result")
 
     def _substitute_variables(self, text: str, variables: Dict[str, Any]) -> str:
@@ -60,7 +68,19 @@ class AgentNode(BaseNode):
         active_model = raw_cfg_model or flow_default_model or self.model
         self.model = active_model
 
-        logger.info(f"[AgentNode:{self.id}] Starting agent task: '{self.name}' with model '{self.model}'")
+        # num_ctx 추출 (노드 개별 설정 > 워크플로우 전역 설정 > 기본 8192)
+        raw_num_ctx = self.config.get("num_ctx")
+        flow_default_num_ctx = None
+        if isinstance(flow_settings, dict):
+            flow_default_num_ctx = flow_settings.get("default_num_ctx")
+        active_num_ctx = 8192
+        if raw_num_ctx is not None and str(raw_num_ctx).isdigit() and int(raw_num_ctx) > 0:
+            active_num_ctx = int(raw_num_ctx)
+        elif flow_default_num_ctx is not None and str(flow_default_num_ctx).isdigit() and int(flow_default_num_ctx) > 0:
+            active_num_ctx = int(flow_default_num_ctx)
+        self.num_ctx = active_num_ctx
+
+        logger.info(f"[AgentNode:{self.id}] Starting agent task: '{self.name}' with model '{self.model}', num_ctx: {self.num_ctx}")
 
         if context.is_cancelled():
             return NodeResult(success=False, error="실행이 취소되었습니다.")
@@ -123,10 +143,12 @@ class AgentNode(BaseNode):
         logger.info(f"[AgentNode:{self.id}] Loaded {len(tools_schema)} tools: {tool_names_str}")
 
         # 5. 시스템 프롬프트 및 대화 메시지 구성
-        # 사용자가 직접 입력한 시스템 프롬프트가 있을 때만 system 역할 메시지 추가 (히든 프롬프트 배제)
+        # 사용자가 직접 입력한 시스템 프롬프트가 있을 때만 우선 적용하고, 미작성 시 인스펙터 플레이스홀더에 안내된 기본 시스템 프롬프트 적용
         messages: List[Dict[str, Any]] = []
         if resolved_sys_prompt and resolved_sys_prompt.strip():
             messages.append({"role": "system", "content": resolved_sys_prompt.strip()})
+        else:
+            messages.append({"role": "system", "content": DEFAULT_AGENT_SYSTEM_PROMPT})
 
         user_message: Dict[str, Any] = {"role": "user", "content": resolved_prompt}
         if base64_screenshot:
@@ -167,13 +189,25 @@ class AgentNode(BaseNode):
                     model=self.model,
                     messages=messages,
                     tools=tools_schema if tools_schema else None,
-                    temperature=self.temperature
+                    temperature=self.temperature,
+                    num_ctx=self.num_ctx
                 ):
                     if context.is_cancelled():
                         break
 
                     ev_type = event.get("type")
-                    if ev_type == "thinking":
+                    if ev_type == "error":
+                        err_msg = event.get("error", "Ollama 모델 실행 중 오류가 발생했습니다.")
+                        logger.error(f"[AgentNode:{self.id}] Ollama error event received: {err_msg}")
+                        await context.emit_event(
+                            node_id=self.id,
+                            node_name=self.name,
+                            node_type=self.node_type,
+                            event_type="ERROR",
+                            content=f"❌ {err_msg}"
+                        )
+                        return NodeResult(success=False, error=err_msg)
+                    elif ev_type == "thinking":
                         token = event.get("token", "")
                         thinking_content += token
                         await context.emit_event(
@@ -220,6 +254,18 @@ class AgentNode(BaseNode):
                     content="⚠️ 비상 중단(F12)되었습니다."
                 )
                 return NodeResult(success=False, error="비상 중단(F12)되었습니다.")
+
+            # Ollama 에러 문자열이 assistant_content에 포함된 경우 즉시 실패 처리
+            if assistant_content.startswith("[Ollama 오류") or assistant_content.startswith("[오류: Ollama"):
+                logger.error(f"[AgentNode:{self.id}] Detected Ollama error in assistant content: {assistant_content}")
+                await context.emit_event(
+                    node_id=self.id,
+                    node_name=self.name,
+                    node_type=self.node_type,
+                    event_type="ERROR",
+                    content=f"❌ {assistant_content}"
+                )
+                return NodeResult(success=False, error=assistant_content)
 
             # 도구 호출 전 추론 과정(Thinking / Thought) 타임라인 카드 확정 발행
             thought_text = thinking_content.strip() or (assistant_content.strip() if assistant_tool_calls else "")
@@ -306,8 +352,14 @@ class AgentNode(BaseNode):
                 logger.info(f"[AgentNode] Agent reached final answer at step {step}")
                 break
 
-        if not completed_normally and not final_answer:
-            final_answer = f"에이전트가 최대 반복 횟수({self.max_steps}회) 내에 작업을 종료했습니다."
+        # 최종 답변이 비어있을 경우 안전 폴백 (임의 프롬프트 주입 없이 로컬 컨텍스트 기반 안전 처리)
+        if not final_answer or not str(final_answer).strip():
+            if thinking_content and thinking_content.strip():
+                final_answer = thinking_content.strip()
+            elif not completed_normally:
+                final_answer = f"에이전트가 최대 반복 횟수({self.max_steps}회) 내에 작업을 종료했습니다."
+            else:
+                final_answer = "에이전트 자동화 작업을 완료했습니다."
 
         # 7. 출력 변수 저장 (선언 및 타입 검증 포함)
         try:

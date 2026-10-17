@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import {
   Search,
   X,
@@ -49,6 +49,62 @@ export const SkillPanel: React.FC<SkillPanelProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [workflowSearchQuery, setWorkflowSearchQuery] = useState('');
   const [collapsedCategories, setCollapsedCategories] = useState<Record<string, boolean>>({});
+
+  // 좌측 패널 가변 너비 상태 (기본값 260px, 범위: 200px ~ 화면 45%)
+  const [panelWidth, setPanelWidth] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem('promptmacro_skill_panel_width');
+      if (saved) {
+        const parsed = parseInt(saved, 10);
+        if (!isNaN(parsed) && parsed >= 200 && parsed <= 800) {
+          return parsed;
+        }
+      }
+    } catch {
+      // 로컬스토리지 접근 제한 시 기본값
+    }
+    return 260;
+  });
+  const [isResizing, setIsResizing] = useState(false);
+
+  // 너비 변경 시 로컬스토리지에 저장
+  useEffect(() => {
+    try {
+      localStorage.setItem('promptmacro_skill_panel_width', panelWidth.toString());
+    } catch {
+      // 무시
+    }
+  }, [panelWidth]);
+
+  // 좌우 리사이즈 마우스 드래그 시작 핸들러
+  const handleStartResize = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsResizing(true);
+
+    const startX = e.clientX;
+    const startWidth = panelWidth;
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      const deltaX = moveEvent.clientX - startX;
+      const maxWidth = Math.max(350, Math.floor(window.innerWidth * 0.45));
+      const nextWidth = Math.max(200, Math.min(maxWidth, startWidth + deltaX));
+      setPanelWidth(nextWidth);
+    };
+
+    const handleMouseUp = () => {
+      setIsResizing(false);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+  }, [panelWidth]);
 
   // 번역된 라벨 및 설명 헬퍼
   const getItemLabel = (item: SkillItem) => t(`skills.${item.type}.label`) || item.label;
@@ -153,7 +209,24 @@ export const SkillPanel: React.FC<SkillPanelProps> = ({
     activeFlow && (activeFlow.id.startsWith('temp_') || !flows.some((f) => f.id === activeFlow.id));
 
   return (
-    <aside className="w-64 bg-slate-900 border-r border-slate-800 flex flex-col h-full select-none">
+    <aside
+      style={{ width: `${panelWidth}px` }}
+      className="relative bg-slate-900 border-r border-slate-800 flex flex-col h-full select-none shrink-0"
+    >
+      {/* 우측 경계선 드래그 리사이저 핸들 (좌우 크기 조절) */}
+      <div
+        onMouseDown={handleStartResize}
+        className={`absolute top-0 -right-1 w-2.5 h-full cursor-col-resize z-30 group transition-colors select-none ${
+          isResizing ? 'bg-indigo-500/30' : 'hover:bg-indigo-500/20'
+        }`}
+        title="드래그하여 좌우 너비 조절"
+      >
+        <div
+          className={`w-0.5 h-full mx-auto transition-colors ${
+            isResizing ? 'bg-indigo-400' : 'bg-transparent group-hover:bg-indigo-400/80'
+          }`}
+        />
+      </div>
       {/* 최상단 탭 스위처: [스킬] vs [워크플로우] */}
       <div className="p-2.5 pb-2 border-b border-slate-800 bg-slate-950/50 shrink-0">
         <div className="grid grid-cols-2 gap-1 p-1 bg-slate-950 rounded-xl border border-slate-800">
@@ -200,7 +273,7 @@ export const SkillPanel: React.FC<SkillPanelProps> = ({
           <div className="p-3.5 border-b border-slate-800 shrink-0">
             <div className="flex items-center justify-between mb-1">
               <h2 className="text-xs font-semibold text-slate-200 tracking-wide">
-                스킬 노드 목록
+                {t('skills.title')}
               </h2>
               {!searchQuery.trim() && (
                 <button
@@ -359,10 +432,10 @@ export const SkillPanel: React.FC<SkillPanelProps> = ({
             <div className="flex items-center justify-between">
               <div>
                 <h2 className="text-xs font-semibold text-slate-200 tracking-wide">
-                  저장된 워크플로우
+                  {t('workflowTab.title')}
                 </h2>
                 <p className="text-[10px] text-slate-400 mt-0.5">
-                  클릭하여 메인 캔버스에 불러오기
+                  {t('workflowTab.subtitle')}
                 </p>
               </div>
               <div className="flex items-center gap-1">
@@ -384,7 +457,7 @@ export const SkillPanel: React.FC<SkillPanelProps> = ({
                     title={t('workflowTab.newWorkflowBtn')}
                   >
                     <Plus className="w-3.5 h-3.5" />
-                    <span>신규</span>
+                    <span>{t('workflowTab.newBtn')}</span>
                   </button>
                 )}
               </div>

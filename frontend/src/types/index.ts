@@ -35,6 +35,7 @@ export interface AgentNodeConfig {
   custom_skills?: string[];
   max_steps?: number;
   temperature?: number;
+  num_ctx?: number;
   output_variable?: string;
 }
 
@@ -61,6 +62,7 @@ export interface WorkflowVariable {
 export interface WorkflowSettings {
   execution_delay: number;
   default_llm_model: string;
+  default_num_ctx?: number;
 }
 
 export interface Flow {

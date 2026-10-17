@@ -57,3 +57,35 @@ async def test_ai_node_streaming_lifecycle():
     assert success_event["event_type"] == "SUCCESS"
     assert success_event["content"] == "요약된 결과 문장입니다."
     assert success_event["image_path"] is not None
+
+
+@pytest.mark.asyncio
+async def test_ai_node_error_handling():
+    """Ollama 오류 문자열 수신 시 AI 노드가 실패(NodeResult(success=False))로 처리되는지 검증"""
+    events = []
+    async def mock_callback(event):
+        events.append(event)
+
+    context = ExecutionContext(
+        session_id="test_ses_ai_err",
+        event_callback=mock_callback,
+        check_cancelled=lambda: False,
+        variables={}
+    )
+
+    node = AINode(
+        id="ai_err_1",
+        name="에러 AI 노드",
+        config={"model": "non_existent_model", "prompt": "질문"}
+    )
+
+    async def mock_stream_generate_err(*args, **kwargs):
+        yield "[Ollama 오류 (404 Not Found): 모델 'non_existent_model'을(를) 찾을 수 없습니다.]"
+
+    with patch("app.nodes.ai.ollama_client.stream_generate", side_effect=mock_stream_generate_err):
+        result = await node.run(context)
+
+    assert result.success is False
+    assert "404 Not Found" in result.error
+    assert any(e["event_type"] == "ERROR" and "404 Not Found" in e["content"] for e in events)
+

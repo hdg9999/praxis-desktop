@@ -3411,16 +3411,19 @@ export const PropertyInspector: React.FC<PropertyInspectorProps> = ({
               {/* 시스템 프롬프트 */}
               <div>
                 <label className="text-[11px] text-slate-400">
-                  {isEn ? 'System Prompt (Optional)' : '시스템 프롬프트 (선택)'}
+                  {t('inspector.agentBasic.systemPromptLabel')}
                 </label>
                 <textarea
-                  rows={2}
+                  rows={4}
                   data-config-key="system_prompt"
                   value={cfg.system_prompt || ''}
                   onChange={(e) => handleConfigChange('system_prompt', e.target.value)}
-                  placeholder={isEn ? '예: 당신은 정밀한 데스크톱 사무 자동화 전문 에이전트입니다.' : '예: 당신은 정밀한 데스크톱 사무 자동화 전문 에이전트입니다.'}
-                  className="w-full px-2.5 py-1.5 text-xs bg-slate-950 border border-slate-700 rounded-lg text-slate-200 mt-1 focus:outline-none focus:border-indigo-500"
+                  placeholder={t('inspector.agentBasic.systemPromptPlaceholder')}
+                  className="w-full px-2.5 py-1.5 text-xs bg-slate-950 border border-slate-700 rounded-lg text-slate-200 mt-1 focus:outline-none focus:border-indigo-500 leading-relaxed font-sans placeholder:text-slate-500"
                 />
+                <div className="text-[10px] text-slate-500 mt-1 leading-tight">
+                  ℹ️ {t('inspector.agentBasic.systemPromptHelp')}
+                </div>
               </div>
 
               {/* 스킬셋 설정 */}
@@ -3564,6 +3567,49 @@ export const PropertyInspector: React.FC<PropertyInspectorProps> = ({
                     onChange={(e) => handleConfigChange('max_steps', Number(e.target.value))}
                     className="w-full px-2.5 py-1 text-xs bg-slate-950 border border-slate-700 rounded text-slate-200 mt-1"
                   />
+                </div>
+
+                {/* 컨텍스트 크기 (num_ctx) */}
+                <div>
+                  <div className="flex items-center justify-between">
+                    <label className="text-[11px] text-slate-400 font-medium flex items-center gap-1.5">
+                      <Layers className="w-3.5 h-3.5 text-indigo-400" />
+                      {t('inspector.agentBasic.numCtxLabel')}
+                    </label>
+                    <span className="text-[11px] font-mono font-bold text-indigo-400">
+                      {(cfg.num_ctx ?? 8192).toLocaleString()} tokens
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 mt-1.5">
+                    <input
+                      type="number"
+                      min="1024"
+                      max="131072"
+                      step="1024"
+                      value={cfg.num_ctx ?? 8192}
+                      onChange={(e) => handleConfigChange('num_ctx', Math.max(1024, Number(e.target.value) || 8192))}
+                      className="w-28 px-2.5 py-1 text-xs font-mono text-right bg-slate-950 border border-slate-700 rounded text-slate-200 focus:outline-none focus:border-indigo-500"
+                    />
+                    <div className="flex items-center gap-1 flex-1 overflow-x-auto py-0.5">
+                      {[8192, 16384, 32768, 65536].map((size) => (
+                        <button
+                          key={size}
+                          type="button"
+                          onClick={() => handleConfigChange('num_ctx', size)}
+                          className={`px-1.5 py-0.5 text-[10px] font-mono rounded transition-colors shrink-0 ${
+                            (cfg.num_ctx ?? 8192) === size
+                              ? 'bg-indigo-600/40 text-indigo-300 border border-indigo-500/60 font-semibold'
+                              : 'bg-slate-950 text-slate-400 border border-slate-800 hover:text-slate-200 hover:bg-slate-900'
+                          }`}
+                        >
+                          {size >= 1024 ? `${size / 1024}k` : size}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <p className="text-[10px] text-slate-500 mt-1 leading-tight">
+                    {t('inspector.agentBasic.numCtxHelp')}
+                  </p>
                 </div>
 
                 <div>

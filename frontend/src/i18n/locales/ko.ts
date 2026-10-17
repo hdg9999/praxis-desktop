@@ -49,7 +49,7 @@ export const ko = {
     flowSettings: '워크플로우 설정',
     flowSettingsTooltip: '현재 워크플로우 전역 설정 (이름, 설명, 실행 속도, 기본 LLM 모델)',
     cannotRunTooltip: '실행 불가 사유:\n{errors}',
-    runFlowTooltip: '워크플로우 실행',
+    runFlowTooltip: '워크플로우 실행 (단축키: F5)',
   },
 
   // 실시간 유효성 검사 (Validation)
@@ -109,6 +109,7 @@ export const ko = {
 
   // 스킬 노드 아이템 (Skill Registry Items)
   skills: {
+    title: '스킬 노드 목록',
     collapseAll: '모두 접기',
     expandAll: '모두 펼치기',
     searchPlaceholder: '스킬 검색 (예: 클릭, 키보드, ollama)',
@@ -390,13 +391,16 @@ export const ko = {
       goalLabel: '사용자 지시 목표 (Goal / User Prompt)',
       goalPlaceholder: '에이전트가 완수할 구체적인 작업 목표를 지시하세요. 예: "메모장을 켜고 인사말을 입력해줘"',
       includeScreenLabel: '실행 시점 PC 화면 스크린샷 포함 (Vision/멀티모달 모델 권장)',
-      systemPromptLabel: '추가 시스템 지침 (System Instructions)',
-      systemPromptPlaceholder: '에이전트의 역할이나 특별한 행동 규칙을 추가합니다.',
+      systemPromptLabel: '시스템 프롬프트 (선택)',
+      systemPromptPlaceholder: '당신은 데스크톱 자동화 전문 AI 에이전트입니다. 주어진 도구(스킬)를 활용하여 작업을 수행하며, 필요한 작업을 마치거나 정보를 획득하면 도구 호출을 종료하고 최종 결과를 사용자에게 한국어로 명확하고 친절하게 설명해야 합니다.',
+      systemPromptHelp: '미입력 시 상기 기본 시스템 프롬프트가 자동으로 적용됩니다.',
       skillModeLabel: '에이전트 사용 가능 스킬셋',
       skillPresetAll: '기본 RPA 스킬 전체',
       skillPresetCustom: '스킬셋 직접 선택 (커스텀)',
       maxStepsLabel: '최대 자율 실행 단계 (Max Steps)',
       maxStepsHelp: '무한 루프 방지를 위한 최대 도구 호출 횟수 (1~30단계)',
+      numCtxLabel: '컨텍스트 크기 (Context Window Size)',
+      numCtxHelp: 'Ollama 모델이 처리할 수 있는 최대 컨텍스트 토큰 크기입니다 (기본: 8192). 장기 자동화나 탐색 요소가 많은 경우 16k~32k 이상을 권장합니다.',
     },
   },
 
@@ -476,8 +480,11 @@ export const ko = {
   workflowTab: {
     tabSkills: '스킬',
     tabWorkflows: '워크플로우',
+    title: '저장된 워크플로우',
+    subtitle: '클릭하여 메인 캔버스에 불러오기',
     searchPlaceholder: '저장된 워크플로우 검색...',
     newWorkflowBtn: '새 워크플로우',
+    newBtn: '신규',
     noDescription: '설명이 등록되지 않은 워크플로우입니다.',
     unsavedBadge: '미저장',
     activeBadge: '편집 중',
@@ -502,6 +509,8 @@ export const ko = {
     defaultModelLabel: '기본 LLM 모델명 (Ollama 연동)',
     defaultModelPlaceholder: '예: llama3, qwen2.5:7b (미지정 시 시스템 첫 번째 모델 사용)',
     defaultModelHelp: '신규 생성되는 AI 질의(Ollama) 및 기본 에이전트 노드에 기본값으로 자동 적용될 모델명입니다.',
+    defaultNumCtxLabel: '기본 LLM 컨텍스트 크기 (Default Context Size)',
+    defaultNumCtxHelp: '에이전트 노드 실행 시 적용될 기본 컨텍스트 윈도우 크기(토큰)입니다. (기본값: 8192, 8k~64k 권장)',
     applyModelToExistingBtn: '현재 워크플로우 내 모든 AI 노드에 일괄 적용',
     appliedCountMsg: '총 {count}개의 AI/에이전트 노드에 기본 모델이 적용되었습니다.',
     saveBtn: '전역 설정 적용',

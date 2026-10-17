@@ -8,6 +8,7 @@ import {
   Workflow,
   Check,
   RefreshCw,
+  Layers,
 } from 'lucide-react';
 import { WorkflowSettings } from '../../types';
 import { useI18n } from '../../i18n';
@@ -43,6 +44,7 @@ export const FlowSettingsModal: React.FC<FlowSettingsModalProps> = ({
   const [description, setDescription] = useState(flowDescription);
   const [executionDelay, setExecutionDelay] = useState<number>(settings.execution_delay ?? 0.3);
   const [defaultLlmModel, setDefaultLlmModel] = useState<string>(settings.default_llm_model ?? '');
+  const [defaultNumCtx, setDefaultNumCtx] = useState<number>(settings.default_num_ctx ?? 8192);
   const [applyToExisting, setApplyToExisting] = useState(false);
 
   useEffect(() => {
@@ -55,6 +57,11 @@ export const FlowSettingsModal: React.FC<FlowSettingsModalProps> = ({
           : 0.3
       );
       setDefaultLlmModel(settings.default_llm_model || '');
+      setDefaultNumCtx(
+        typeof settings.default_num_ctx === 'number' && !isNaN(settings.default_num_ctx) && settings.default_num_ctx > 0
+          ? settings.default_num_ctx
+          : 8192
+      );
       setApplyToExisting(false);
     }
   }, [isOpen, flowName, flowDescription, settings]);
@@ -70,6 +77,7 @@ export const FlowSettingsModal: React.FC<FlowSettingsModalProps> = ({
       {
         execution_delay: Number(safeDelay.toFixed(2)),
         default_llm_model: defaultLlmModel.trim(),
+        default_num_ctx: Math.max(1024, Math.min(131072, Number(defaultNumCtx) || 8192)),
       },
       applyToExisting
     );
@@ -261,6 +269,51 @@ export const FlowSettingsModal: React.FC<FlowSettingsModalProps> = ({
                 </span>
               </label>
             )}
+          </div>
+
+          {/* 5. 기본 LLM 컨텍스트 크기 (기본값: 8192) */}
+          <div className="p-3.5 rounded-xl bg-slate-950/70 border border-slate-800 space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-200">
+                <Layers className="w-3.5 h-3.5 text-cyan-400" />
+                {t('flowSettings.defaultNumCtxLabel')}
+              </label>
+              <span className="text-xs font-mono font-bold text-cyan-400 bg-cyan-950/50 border border-cyan-800/60 px-2 py-0.5 rounded-lg">
+                {defaultNumCtx.toLocaleString()} tokens
+              </span>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                min="1024"
+                max="131072"
+                step="1024"
+                value={defaultNumCtx}
+                onChange={(e) => setDefaultNumCtx(Math.max(1024, Number(e.target.value) || 8192))}
+                className="w-32 px-3 py-1.5 text-xs font-mono text-right bg-slate-900 border border-cyan-800/60 rounded-lg text-cyan-200 focus:outline-none focus:border-cyan-500"
+              />
+              <div className="flex items-center gap-1 flex-1 overflow-x-auto py-0.5">
+                {[8192, 16384, 32768, 65536].map((size) => (
+                  <button
+                    key={size}
+                    type="button"
+                    onClick={() => setDefaultNumCtx(size)}
+                    className={`px-2 py-1 text-[11px] font-mono rounded-lg transition-colors shrink-0 ${
+                      defaultNumCtx === size
+                        ? 'bg-cyan-600/30 text-cyan-300 border border-cyan-500/60 font-semibold'
+                        : 'bg-slate-900 text-slate-400 border border-slate-800 hover:text-slate-200 hover:bg-slate-800'
+                    }`}
+                  >
+                    {size >= 1024 ? `${size / 1024}k` : size}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <p className="text-[10px] text-slate-400 leading-relaxed">
+              {t('flowSettings.defaultNumCtxHelp')}
+            </p>
           </div>
 
           {/* 하단 버튼 */}

@@ -37,7 +37,8 @@ class OllamaClient:
         model: str,
         prompt: str,
         system_prompt: Optional[str] = None,
-        temperature: float = 0.7
+        temperature: float = 0.7,
+        num_ctx: int = 8192
     ) -> AsyncGenerator[str, None]:
         """
         Ollama 스트리밍 응답 제너레이터.
@@ -48,7 +49,8 @@ class OllamaClient:
             "prompt": prompt,
             "stream": True,
             "options": {
-                "temperature": temperature
+                "temperature": temperature,
+                "num_ctx": num_ctx
             }
         }
         if system_prompt:
@@ -94,6 +96,7 @@ class OllamaClient:
         messages: List[Dict[str, Any]],
         tools: Optional[List[Dict[str, Any]]] = None,
         temperature: float = 0.3,
+        num_ctx: int = 8192,
         stream: bool = False
     ) -> Dict[str, Any]:
         """
@@ -106,7 +109,8 @@ class OllamaClient:
             "messages": messages,
             "stream": False,
             "options": {
-                "temperature": temperature
+                "temperature": temperature,
+                "num_ctx": num_ctx
             }
         }
         if tools:
@@ -125,27 +129,27 @@ class OllamaClient:
                         err_msg = err_json.get("error", res.text)
                     except Exception:
                         err_msg = res.text
-                    if res.status_code == 404:
-                        return {
-                            "role": "assistant",
-                            "content": f"[Ollama 오류 (404 Not Found): 모델 '{model}'을(를) 찾을 수 없습니다. Ollama에 해당 모델이 다운로드되어 있는지 확인해 주세요.]",
-                            "tool_calls": []
-                        }
+                    err_str = f"[Ollama 오류 (404 Not Found): 모델 '{model}'을(를) 찾을 수 없습니다. Ollama에 해당 모델이 다운로드되어 있는지 확인해 주세요.]" if res.status_code == 404 else f"[Ollama 오류 ({res.status_code}): {err_msg}]"
                     return {
                         "role": "assistant",
-                        "content": f"[Ollama 오류 ({res.status_code}): {err_msg}]",
+                        "content": err_str,
+                        "error": err_str,
                         "tool_calls": []
                     }
             except httpx.ConnectError:
+                err_str = "[오류: Ollama 서버(localhost:11434)에 연결할 수 없습니다.]"
                 return {
                     "role": "assistant",
-                    "content": "[오류: Ollama 서버(localhost:11434)에 연결할 수 없습니다.]",
+                    "content": err_str,
+                    "error": err_str,
                     "tool_calls": []
                 }
             except Exception as e:
+                err_str = f"[오류 발생: {str(e)}]"
                 return {
                     "role": "assistant",
-                    "content": f"[오류 발생: {str(e)}]",
+                    "content": err_str,
+                    "error": err_str,
                     "tool_calls": []
                 }
 
@@ -154,7 +158,8 @@ class OllamaClient:
         model: str,
         messages: List[Dict[str, Any]],
         tools: Optional[List[Dict[str, Any]]] = None,
-        temperature: float = 0.3
+        temperature: float = 0.3,
+        num_ctx: int = 8192
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """
         Ollama /api/chat 스트리밍 제너레이터.
@@ -162,13 +167,15 @@ class OllamaClient:
         - {"type": "content", "token": "..."}
         - {"type": "thinking", "token": "..."}
         - {"type": "done", "message": {...}}
+        - {"type": "error", "error": "..."}
         """
         payload: Dict[str, Any] = {
             "model": model,
             "messages": messages,
             "stream": True,
             "options": {
-                "temperature": temperature
+                "temperature": temperature,
+                "num_ctx": num_ctx
             }
         }
         if tools:
@@ -194,8 +201,8 @@ class OllamaClient:
                         else:
                             msg = f"[Ollama 오류 ({response.status_code}): {err_text or '요청 실패'}]"
                         yield {
-                            "type": "content",
-                            "token": msg
+                            "type": "error",
+                            "error": msg
                         }
                         return
 
@@ -206,12 +213,18 @@ class OllamaClient:
                             chunk = json.loads(line)
                             msg = chunk.get("message", {})
                             token = msg.get("content", "")
+                            thinking_token = msg.get("thinking", "")
 
                             # tool_calls 축적
                             if msg.get("tool_calls"):
                                 for tc in msg["tool_calls"]:
                                     accumulated_tool_calls.append(tc)
 
+                            # 1) Ollama 0.5+ message.thinking 필드 (gpt-oss, deepseek-r1 등)
+                            if thinking_token:
+                                yield {"type": "thinking", "token": thinking_token}
+
+                            # 2) content 필드 및 <think> 태그 처리
                             if token:
                                 accumulated_content += token
 
@@ -242,13 +255,13 @@ class OllamaClient:
                             continue
             except httpx.ConnectError:
                 yield {
-                    "type": "content",
-                    "token": "[오류: Ollama 서버(localhost:11434)에 연결할 수 없습니다.]"
+                    "type": "error",
+                    "error": "[오류: Ollama 서버(localhost:11434)에 연결할 수 없습니다.]"
                 }
             except Exception as e:
                 yield {
-                    "type": "content",
-                    "token": f"[오류 발생: {str(e)}]"
+                    "type": "error",
+                    "error": f"[오류 발생: {str(e)}]"
                 }
 
 ollama_client = OllamaClient()

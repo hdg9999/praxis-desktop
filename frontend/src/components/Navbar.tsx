@@ -12,6 +12,7 @@ import {
   AlertCircle,
   Globe,
   SlidersHorizontal,
+  Loader2,
 } from 'lucide-react';
 import { Flow } from '../types';
 import { FlowValidationResult } from '../utils/flowValidator';
@@ -31,6 +32,7 @@ interface NavbarProps {
   onOpenFlowSettings?: () => void;
   isSaving?: boolean;
   isLoadingFlows?: boolean;
+  isExecuting?: boolean;
   validation?: FlowValidationResult;
 }
 
@@ -48,6 +50,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenFlowSettings,
   isSaving,
   isLoadingFlows,
+  isExecuting,
   validation,
 }) => {
   const { language, setLanguage, t } = useI18n();
@@ -198,11 +201,11 @@ export const Navbar: React.FC<NavbarProps> = ({
 
           <button
             onClick={onRunFlow}
-            disabled={validation ? !validation.isValid : false}
+            disabled={(validation ? !validation.isValid : false) || isExecuting}
             className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold shadow-md transition-all ml-1 ${
-              validation && !validation.isValid
+              (validation && !validation.isValid) || isExecuting
                 ? 'bg-slate-800/80 text-slate-500 border border-slate-700/60 cursor-not-allowed shadow-none'
-                : 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white hover:from-blue-500 hover:to-indigo-500 shadow-blue-500/20'
+                : 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white hover:from-blue-500 hover:to-indigo-500 shadow-blue-500/20 active:scale-95'
             }`}
             title={
               validation && !validation.isValid
@@ -210,8 +213,15 @@ export const Navbar: React.FC<NavbarProps> = ({
                 : t('nav.runFlowTooltip')
             }
           >
-            <Play className="w-3.5 h-3.5 fill-current" />
-            {t('nav.runFlow')}
+            {isExecuting ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-300" />
+            ) : (
+              <Play className="w-3.5 h-3.5 fill-current" />
+            )}
+            <span>{isExecuting ? t('common.running') : t('nav.runFlow')}</span>
+            <kbd className="hidden sm:inline-block ml-0.5 px-1.5 py-0.5 text-[10px] font-mono font-bold bg-white/20 text-white/95 rounded border border-white/30 shadow-xs leading-none">
+              F5
+            </kbd>
           </button>
         </div>
       )}

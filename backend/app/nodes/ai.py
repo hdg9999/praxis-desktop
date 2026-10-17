@@ -24,9 +24,15 @@ class AINode(BaseNode):
         raw_cfg_model = str(self.config.get("model") or "").strip()
         flow_settings = getattr(context, "flow_settings", None)
         flow_default_model = ""
+        flow_default_num_ctx = None
         if isinstance(flow_settings, dict):
             flow_default_model = str(flow_settings.get("default_llm_model") or "").strip()
+            flow_default_num_ctx = flow_settings.get("default_num_ctx")
         active_model = raw_cfg_model or flow_default_model or self.model
+
+        active_num_ctx = 8192
+        if flow_default_num_ctx is not None and str(flow_default_num_ctx).isdigit() and int(flow_default_num_ctx) > 0:
+            active_num_ctx = int(flow_default_num_ctx)
 
         # 템플릿 변수 치환 적용
         resolved_prompt = render_template(self.prompt_template, context.variables)
@@ -57,7 +63,8 @@ class AINode(BaseNode):
                 model=active_model,
                 prompt=resolved_prompt,
                 system_prompt=self.system_prompt,
-                temperature=self.temperature
+                temperature=self.temperature,
+                num_ctx=active_num_ctx
             ):
                 if context.is_cancelled():
                     return NodeResult(success=False, error="실행이 취소되었습니다.")
@@ -71,6 +78,18 @@ class AINode(BaseNode):
                     event_type="STREAM_CHUNK",
                     content=accumulated_response
                 )
+
+            # Ollama 에러 문자열 감지 시 실패 처리
+            if accumulated_response.startswith("[Ollama 오류") or accumulated_response.startswith("[오류:"):
+                error_msg = f"{self.name} 실행 중 오류 발생: {accumulated_response}"
+                await context.emit_event(
+                    node_id=self.id,
+                    node_name=self.name,
+                    node_type="AI",
+                    event_type="ERROR",
+                    content=f"❌ {error_msg}"
+                )
+                return NodeResult(success=False, error=error_msg)
 
             # 스트리밍 완료 후 화면 캡처 (설정 On일 때만)
             after_screenshot_url = None

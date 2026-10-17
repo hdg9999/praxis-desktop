@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import {
   Variable,
   Plus,
@@ -44,6 +44,68 @@ export const VariableManagerPanel: React.FC<VariableManagerPanelProps> = ({
 
   const [isExpanded, setIsExpanded] = useState(true);
   const [activeSubTab, setActiveSubTab] = useState<'declared' | 'system'>('declared');
+
+  // 하단 패널 높이 상태 (기본값 224px, 범위: 120px ~ 화면 70%)
+  const [panelHeight, setPanelHeight] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem('promptmacro_var_panel_height');
+      if (saved) {
+        const parsed = parseInt(saved, 10);
+        if (!isNaN(parsed) && parsed >= 120 && parsed <= 800) {
+          return parsed;
+        }
+      }
+    } catch {
+      // 로컬스토리지 접근 제한 시 기본값
+    }
+    return 224;
+  });
+  const [isResizing, setIsResizing] = useState(false);
+
+  // 높이 변경 시 로컬스토리지 저장
+  useEffect(() => {
+    try {
+      localStorage.setItem('promptmacro_var_panel_height', panelHeight.toString());
+    } catch {
+      // 무시
+    }
+  }, [panelHeight]);
+
+  // 상하 리사이즈 마우스 드래그 핸들러
+  const handleStartResize = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    // 접혀있었다면 자동으로 펼침
+    if (!isExpanded) {
+      setIsExpanded(true);
+    }
+
+    setIsResizing(true);
+    const startY = e.clientY;
+    const startHeight = panelHeight;
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      // 위로 드래그 시 높이 증가
+      const deltaY = startY - moveEvent.clientY;
+      const maxHeight = Math.max(300, Math.floor(window.innerHeight * 0.7));
+      const nextHeight = Math.max(120, Math.min(maxHeight, startHeight + deltaY));
+      setPanelHeight(nextHeight);
+    };
+
+    const handleMouseUp = () => {
+      setIsResizing(false);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+
+    document.body.style.cursor = 'row-resize';
+    document.body.style.userSelect = 'none';
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+  }, [isExpanded, panelHeight]);
 
   // 신규 변수 추가 입력 폼 상태
   const [newName, setNewName] = useState('');
@@ -228,10 +290,26 @@ export const VariableManagerPanel: React.FC<VariableManagerPanelProps> = ({
 
   return (
     <section
-      className={`bg-slate-900 border-t border-slate-800 flex flex-col select-none transition-all duration-200 shrink-0 ${
-        isExpanded ? 'h-56' : 'h-9'
+      style={{ height: isExpanded ? `${panelHeight}px` : '36px' }}
+      className={`relative bg-slate-900 border-t border-slate-800 flex flex-col select-none shrink-0 ${
+        isResizing ? '' : 'transition-[height] duration-200'
       }`}
     >
+      {/* 상단 경계선 드래그 리사이저 핸들 (상하 크기 조절) */}
+      <div
+        onMouseDown={handleStartResize}
+        className={`absolute -top-1 left-0 right-0 h-2.5 cursor-row-resize z-30 group transition-colors select-none flex items-center justify-center ${
+          isResizing ? 'bg-emerald-500/30' : 'hover:bg-emerald-500/20'
+        }`}
+        title="드래그하여 상하 높이 조절"
+      >
+        {/* 미세한 드래그 그립 인디케이터 바 */}
+        <div
+          className={`w-12 h-1 rounded-full transition-colors ${
+            isResizing ? 'bg-emerald-400' : 'bg-slate-700/60 group-hover:bg-emerald-400/80'
+          }`}
+        />
+      </div>
       {/* 상단 헤더 바 */}
       <div className="h-9 px-3.5 bg-slate-950/80 border-b border-slate-800/80 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-3">

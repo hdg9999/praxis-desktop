@@ -172,7 +172,9 @@ ipcMain.handle('window:restore', async () => {
       mainWindow.restore();
     }
     mainWindow.show();
+    mainWindow.setAlwaysOnTop(true);
     mainWindow.focus();
+    mainWindow.setAlwaysOnTop(false);
     return true;
   }
   return false;

@@ -46,6 +46,7 @@ const DEFAULT_FLOW_DESC = '업무 시작 전 AI 브리핑을 생성하고 클립
 const DEFAULT_FLOW_SETTINGS: WorkflowSettings = {
   execution_delay: 0.3,
   default_llm_model: '',
+  default_num_ctx: 8192,
 };
 
 const INITIAL_VARIABLES: WorkflowVariable[] = [
@@ -167,6 +168,32 @@ export function App() {
   const [selectedNode, setSelectedNode] = useState<Node | null>(null);
   const [ollamaModels, setOllamaModels] = useState<string[]>([]);
   const [isSaving, setIsSaving] = useState(false);
+  const [isExecuting, setIsExecuting] = useState(false);
+  const isExecutingRef = React.useRef(false);
+  const isSavingRef = React.useRef(false);
+  const minimizedByRunRef = React.useRef(false);
+
+  useEffect(() => {
+    isExecutingRef.current = isExecuting;
+  }, [isExecuting]);
+
+  useEffect(() => {
+    isSavingRef.current = isSaving;
+  }, [isSaving]);
+
+  // Flow 실행으로 인해 최소화된 메인 윈도우 원상 복귀 (성공, 실패, F12 비상정지 포함)
+  const restoreWindowIfMinimized = useCallback(async () => {
+    if (minimizedByRunRef.current) {
+      minimizedByRunRef.current = false;
+      if (window.electronAPI?.restoreMainWindow) {
+        try {
+          await window.electronAPI.restoreMainWindow();
+        } catch (e) {
+          console.warn('[Window] 메인 윈도우 복원 실패:', e);
+        }
+      }
+    }
+  }, []);
 
   // 변수 클릭 삽입 트리거 (하단 패널 -> 우측 Inspector)
   const [externalInsertTrigger, setExternalInsertTrigger] = useState<{
@@ -366,11 +393,13 @@ export function App() {
   useEffect(() => {
     const cleanupWs = connectWebSocket(
       (event) => {
-        // 1) 세션 완료 이벤트
+        // 1) 세션 완료 이벤트 (성공, 실패, F12 비상정지 취소 모두 포함)
         if (event.event_type === 'SESSION_FINISHED') {
+          setIsExecuting(false);
           loadSessions();
           setStreamingToken(null);
           setStreamingNodeId(null);
+          restoreWindowIfMinimized();
           return;
         }
 
@@ -438,7 +467,28 @@ export function App() {
     );
 
     return cleanupWs;
-  }, [activeSessionId]);
+  }, [activeSessionId, restoreWindowIfMinimized]);
+
+  // 실행 중(isExecuting) 상태일 때 세션 종료 여부 감시 폴링 (웹소켓 단절 대비 안전망)
+  useEffect(() => {
+    if (!isExecuting || !activeSessionId) return;
+
+    const interval = setInterval(async () => {
+      try {
+        const latestSessions = await fetchSessions();
+        const curSession = latestSessions.find((s) => s.id === activeSessionId);
+        if (curSession && curSession.status !== 'RUNNING') {
+          setIsExecuting(false);
+          setSessions(latestSessions);
+          await restoreWindowIfMinimized();
+        }
+      } catch (err) {
+        console.warn('[Session Polling] 세션 상태 확인 실패:', err);
+      }
+    }, 1500);
+
+    return () => clearInterval(interval);
+  }, [isExecuting, activeSessionId, restoreWindowIfMinimized]);
 
   // 활성 세션 변경 시 메시지 목록 로드
   useEffect(() => {
@@ -817,15 +867,33 @@ export function App() {
 
   const handleRunFlow = async () => {
     if (!activeFlow) return;
+    if (isExecutingRef.current) {
+      console.warn('[RunFlow] 이미 워크플로우가 실행 중입니다.');
+      return;
+    }
     if (!validation.isValid) {
       alert(`워크플로우를 실행할 수 없습니다.\n\n확인된 문제점:\n${validation.errors.map((e) => `• ${e}`).join('\n')}`);
       return;
     }
 
+    setIsExecuting(true);
+
     try {
-      // 실행 전 자동 저장 (신규 워크플로우도 저장된 ID로 실행 보장)
+      // 1. 실행 전 자동 저장 (신규 워크플로우도 저장된 ID로 실행 보장)
       const savedFlow = await handleSaveFlow();
       const targetFlowId = savedFlow?.id || activeFlow.id;
+
+      // 2. Flow 실행 시 메인 윈도우 창 최소화 (데스크톱 대상 창 가림 방지)
+      if (window.electronAPI?.minimizeMainWindow) {
+        try {
+          await window.electronAPI.minimizeMainWindow();
+          minimizedByRunRef.current = true;
+        } catch (minErr) {
+          console.warn('[Window] 메인 윈도우 최소화 실패:', minErr);
+        }
+      }
+
+      // 3. 백엔드 Flow 실행 요청
       const runRes = await runFlow(targetFlowId);
 
       // Agent Runner 화면으로 자동 전환 및 새 세션 활성화
@@ -833,7 +901,10 @@ export function App() {
       setCurrentTab('runner');
       await loadSessions();
     } catch (e) {
-      console.error(e);
+      console.error('[RunFlow] 실행 실패:', e);
+      setIsExecuting(false);
+      await restoreWindowIfMinimized();
+      alert(`워크플로우 실행 중 오류가 발생했습니다: ${e}`);
     }
   };
 
@@ -843,6 +914,9 @@ export function App() {
       await loadSessions();
     } catch (e) {
       console.error(e);
+    } finally {
+      setIsExecuting(false);
+      await restoreWindowIfMinimized();
     }
   };
 
@@ -926,9 +1000,23 @@ export function App() {
     }
   }, [undo, nodes, edges, setNodes, setEdges, selectedNode]);
 
-  // 전역 단축키 리스너: Delete(노드/간선 삭제), Ctrl+Z(실행 취소)
+  const handleRunFlowRef = React.useRef(handleRunFlow);
+  useEffect(() => {
+    handleRunFlowRef.current = handleRunFlow;
+  }, [handleRunFlow]);
+
+  // 전역 단축키 리스너: F5(Flow 실행), Delete(노드/간선 삭제), Ctrl+Z(실행 취소)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // 1) F5 - Flow 실행 (웹/Electron 새로고침 방지 및 포커스 무관 전역 실행)
+      if (e.key === 'F5' || e.key === 'f5') {
+        e.preventDefault(); // 새로고침 원천 차단
+        if (!isExecutingRef.current && !isSavingRef.current) {
+          handleRunFlowRef.current();
+        }
+        return;
+      }
+
       const activeEl = document.activeElement;
       const isInput = activeEl && (
         activeEl.tagName === 'INPUT' ||
@@ -937,7 +1025,7 @@ export function App() {
       );
       if (isInput) return;
 
-      // 1) Ctrl+Z (Cmd+Z) - 실행 취소 (Undo)
+      // 2) Ctrl+Z (Cmd+Z) - 실행 취소 (Undo)
       if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z') && !e.shiftKey) {
         if (currentTab === 'builder') {
           e.preventDefault();
@@ -946,7 +1034,7 @@ export function App() {
         return;
       }
 
-      // 2) Delete 키 - 선택된 노드 및 간선 삭제 (사용자 요청에 따라 Backspace 제외)
+      // 3) Delete 키 - 선택된 노드 및 간선 삭제 (사용자 요청에 따라 Backspace 제외)
       if (e.key === 'Delete') {
         if (currentTab === 'builder') {
           const hasSelectedNode = selectedNode || nodes.some((n) => n.selected);
@@ -1004,6 +1092,7 @@ export function App() {
         onOpenFlowSettings={() => setIsFlowSettingsOpen(true)}
         isSaving={isSaving}
         isLoadingFlows={isLoadingFlows}
+        isExecuting={isExecuting}
         validation={validation}
       />
 
