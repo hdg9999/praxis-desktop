@@ -300,6 +300,7 @@ class FlowEngine:
             await event_callback(event_payload)
 
         overall_status = "SUCCESS"
+        last_error_msg: Optional[str] = None
 
         try:
             # 2. 워크플로우 변수 스키마 파싱 및 사전 유효성 검증
@@ -328,6 +329,7 @@ class FlowEngine:
                 if validation_err:
                     err_node_id, err_node_name, err_text = validation_err
                     overall_status = "FAILED"
+                    last_error_msg = err_text
                     await internal_event_callback({
                         "node_id": err_node_id,
                         "node_name": err_node_name,
@@ -366,6 +368,7 @@ class FlowEngine:
                     if not result or not result.success:
                         overall_status = "FAILED"
                         err_msg = getattr(result, "error", None) or "노드 실행에 실패했습니다."
+                        last_error_msg = err_msg
                         await internal_event_callback({
                             "node_id": node_data.get("id", ""),
                             "node_name": node_data.get("data", {}).get("label", node_instance.name),
@@ -377,6 +380,7 @@ class FlowEngine:
 
         except Exception as e:
             overall_status = "FAILED"
+            last_error_msg = f"노드 실행 중 치명적 예외 발생: {str(e)}"
             print(f"Error during flow run: {e}")
             curr_node_id = node_data.get("id", "") if 'node_data' in locals() else ""
             curr_node_name = node_data.get("data", {}).get("label", "실행 노드") if 'node_data' in locals() else "엔진 오류"
@@ -385,7 +389,7 @@ class FlowEngine:
                 "node_name": curr_node_name,
                 "node_type": "GENERAL",
                 "event_type": "ERROR",
-                "content": f"❌ 노드 실행 중 치명적 예외 발생: {str(e)}"
+                "content": f"❌ {last_error_msg}"
             })
 
         finally:
@@ -403,8 +407,11 @@ class FlowEngine:
             # 세션 완료 이벤트 전송
             await event_callback({
                 "session_id": session_id,
+                "flow_id": flow_id,
+                "flow_name": flow_name,
                 "event_type": "SESSION_FINISHED",
                 "status": overall_status,
+                "error": last_error_msg,
                 "ended_at": datetime.now(timezone.utc).isoformat()
             })
 

@@ -538,7 +538,44 @@ export const ko = {
     outputVarHelp: '출력 변수는 반드시 워크플로우 변수 관리 패널에 선언된 변수만 지정할 수 있습니다.',
     quickInsertLabel: '변수 간편 삽입 (클릭 또는 드래그):',
   },
+
+  // Agent Manager 전용 UI
+  agentManager: {
+    title: 'Agent Manager',
+    subtitle: '저장된 워크플로우 실행 및 이력 관리',
+    tabWorkflows: '저장된 워크플로우',
+    tabHistory: '실행 기록',
+    searchPlaceholder: '저장된 워크플로우 이름 또는 설명 검색...',
+    runWorkflowBtn: '실행',
+    runningBtn: '실행 중...',
+    noSavedWorkflows: '저장된 워크플로우가 없습니다. Flow Builder에서 먼저 워크플로우를 생성하고 저장해 주세요.',
+    openInFlowBuilder: 'Flow Builder에서 보기',
+    openInFlowBuilderTooltip: 'Flow Builder 창을 열고 현재 워크플로우 및 실행 기록을 확인합니다.',
+    runnerSettingsBtn: 'Runner 환경 설정',
+    nodeCount: '노드 {count}개',
+    varCount: '변수 {count}개',
+    delayBadge: '딜레이 {sec}s',
+    updatedAt: '수정: {date}',
+    toastSuccessTitle: '워크플로우 실행 완료',
+    toastSuccessBody: "'{name}' 워크플로우가 성공적으로 완료되었습니다.",
+    toastFailedTitle: '워크플로우 실행 실패/오류',
+    toastFailedBody: "'{name}' 실행 중 오류가 발생했습니다: {error}",
+    toastFailedDefault: '노드 실행 중 오류가 발생했습니다. 실행 기록 탭에서 상세 로그를 확인하세요.',
+    toastCancelledTitle: '워크플로우 실행 중단',
+    toastCancelledBody: "'{name}' 워크플로우 실행이 중단(취소)되었습니다.",
+  },
+
+  // Runner 환경 설정 (템플릿 창)
+  runnerSettings: {
+    title: 'Runner 환경 설정',
+    subtitle: 'Agent Runner 및 Manager 실행 환경 설정',
+    templateNoticeTitle: 'Runner 환경 설정 준비 중',
+    templateNoticeDesc: '현재 Runner 환경 설정에 대한 세부 기획이 진행 중입니다. 추후 실행 알림, 단축키, 백그라운드 동작 등 세부 옵션이 이곳에 추가될 예정입니다.',
+    saveBtn: '저장',
+    savedFeedback: '설정이 저장되었습니다.',
+  },
 };
 
 export type TranslationType = typeof ko;
+
 

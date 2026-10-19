@@ -3,6 +3,8 @@ import ReactDOM from 'react-dom/client';
 import App from './App';
 import { PickerPanelWindow } from './components/ObjectPicker/PickerPanelWindow';
 import { PickerHighlightOverlay } from './components/ObjectPicker/PickerHighlightOverlay';
+import { AgentManagerWindow } from './components/AgentManager/AgentManagerWindow';
+import { RunnerSettingsWindow } from './components/AgentManager/RunnerSettingsWindow';
 import { I18nProvider } from './i18n';
 import './index.css';
 
@@ -15,6 +17,12 @@ function RootComponent() {
   }
   if (mode === 'picker_overlay') {
     return <PickerHighlightOverlay />;
+  }
+  if (mode === 'agent_manager') {
+    return <AgentManagerWindow />;
+  }
+  if (mode === 'runner_settings') {
+    return <RunnerSettingsWindow />;
   }
   return <App />;
 }

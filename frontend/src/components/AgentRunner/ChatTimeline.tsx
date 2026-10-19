@@ -66,46 +66,54 @@ export const ChatTimeline: React.FC<ChatTimelineProps> = ({
   };
 
   return (
-    <div className="flex-1 flex flex-col h-full bg-slate-950 overflow-hidden select-text">
+    <div className="flex-1 min-w-0 flex flex-col h-full bg-slate-950 overflow-hidden select-text">
       {/* 채팅방 상단 헤더 */}
-      <div className="px-6 py-3.5 bg-slate-900 border-b border-slate-800 flex items-center justify-between shadow-sm">
-        <div className="flex items-center gap-3">
-          <div className="p-2 rounded-xl bg-blue-950/60 border border-blue-800/60 text-blue-400">
+      <div className="px-4 sm:px-6 py-3 bg-slate-900 border-b border-slate-800 flex items-center justify-between gap-3 shadow-sm shrink-0">
+        <div className="flex items-center gap-2.5 min-w-0 flex-1">
+          <div className="p-2 rounded-xl bg-blue-950/60 border border-blue-800/60 text-blue-400 shrink-0">
             <Terminal className="w-4 h-4" />
           </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-sm font-semibold text-slate-100">{session.flow_name}</h1>
-              <span className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded font-mono">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2 min-w-0">
+              <h1
+                className="text-sm font-semibold text-slate-100 truncate"
+                title={session.flow_name}
+              >
+                {session.flow_name}
+              </h1>
+              <span
+                className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded font-mono truncate max-w-[130px] sm:max-w-[200px] shrink-0"
+                title={`#${session.id}`}
+              >
                 #{session.id}
               </span>
             </div>
-            <p className="text-[11px] text-slate-400 mt-0.5">
+            <p className="text-[11px] text-slate-400 mt-0.5 truncate">
               {new Date(session.started_at).toLocaleString()}
             </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 shrink-0">
           {isRunning && (
             <button
               onClick={() => onStopSession(session.id)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-950 text-red-300 border border-red-800 hover:bg-red-900 hover:text-white transition-colors text-xs font-semibold shadow-sm"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-950 text-red-300 border border-red-800 hover:bg-red-900 hover:text-white transition-colors text-xs font-semibold shadow-sm whitespace-nowrap shrink-0"
               title={`${t('runner.stopSessionButton')} (F12)`}
             >
-              <Square className="w-3.5 h-3.5 fill-current" />
-              {t('runner.stopSessionButton')} (F12)
+              <Square className="w-3.5 h-3.5 fill-current shrink-0" />
+              <span>{t('runner.stopSessionButton')} (F12)</span>
             </button>
           )}
 
-          <div className="text-[11px] px-2.5 py-1 rounded-full border border-slate-700 bg-slate-800/80 text-slate-300 font-mono">
+          <div className="text-[11px] px-2.5 py-1 rounded-full border border-slate-700 bg-slate-800/80 text-slate-300 font-mono whitespace-nowrap shrink-0">
             {t('common.status')}: {session.status}
           </div>
         </div>
       </div>
 
       {/* 채팅 메시지 타임라인 (말풍선 목록) */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto p-6 space-y-4">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4">
         {messages.map((msg) => {
           const isAi = msg.node_type === 'AI';
           const isAgent = msg.node_type === 'AGENT';
@@ -120,29 +128,29 @@ export const ChatTimeline: React.FC<ChatTimelineProps> = ({
           return (
             <div
               key={msg.id}
-              className={`flex flex-col max-w-3xl rounded-2xl border p-4 transition-all shadow-sm ${
+              className={`flex flex-col max-w-3xl min-w-0 overflow-hidden rounded-2xl border p-4 transition-all shadow-sm ${
                 isError
-                  ? 'bg-rose-950/20 border-rose-900/60 text-rose-200 ml-2 mr-auto'
+                  ? 'bg-rose-950/20 border-rose-900/60 text-rose-200 ml-1 mr-auto'
                   : isThinking
-                  ? 'bg-indigo-950/20 border-indigo-900/40 text-indigo-200 ml-4 mr-auto'
+                  ? 'bg-indigo-950/20 border-indigo-900/40 text-indigo-200 ml-2 sm:ml-4 mr-auto'
                   : isToolCall
-                  ? 'bg-sky-950/25 border-sky-800/50 text-sky-200 ml-4 mr-auto'
+                  ? 'bg-sky-950/25 border-sky-800/50 text-sky-200 ml-2 sm:ml-4 mr-auto'
                   : isToolResult
-                  ? 'bg-slate-900/90 border-slate-700/60 text-slate-200 ml-6 mr-auto'
+                  ? 'bg-slate-900/90 border-slate-700/60 text-slate-200 ml-3 sm:ml-6 mr-auto'
                   : isStepStart
-                  ? 'bg-slate-900/50 border-slate-800/80 text-indigo-300 ml-2 mr-auto py-2'
+                  ? 'bg-slate-900/50 border-slate-800/80 text-indigo-300 ml-1 mr-auto py-2'
                   : isAgent
-                  ? 'bg-slate-900/95 border-indigo-900/50 text-slate-200 ml-2 mr-auto'
+                  ? 'bg-slate-900/95 border-indigo-900/50 text-slate-200 ml-1 mr-auto'
                   : isAi
-                  ? 'bg-slate-900/90 border-purple-900/40 text-slate-200 ml-2 mr-auto'
-                  : 'bg-slate-900/90 border-slate-800/90 text-slate-200 ml-2 mr-auto'
+                  ? 'bg-slate-900/90 border-purple-900/40 text-slate-200 ml-1 mr-auto'
+                  : 'bg-slate-900/90 border-slate-800/90 text-slate-200 ml-1 mr-auto'
               }`}
             >
               {/* 메시지 발신자 / 노드 헤더 */}
-              <div className="flex items-center justify-between gap-2 mb-2 pb-1.5 border-b border-slate-800/60 text-xs">
-                <div className="flex items-center gap-2">
+              <div className="flex items-center justify-between gap-2 mb-2 pb-1.5 border-b border-slate-800/60 text-xs min-w-0">
+                <div className="flex items-center gap-1.5 flex-wrap min-w-0">
                   <div
-                    className={`p-1 rounded-md ${
+                    className={`p-1 rounded-md shrink-0 ${
                       isError
                         ? 'bg-rose-900/40 text-rose-400'
                         : isThinking
@@ -178,37 +186,39 @@ export const ChatTimeline: React.FC<ChatTimelineProps> = ({
                       <Terminal className="w-3.5 h-3.5" />
                     )}
                   </div>
-                  <span className="font-semibold text-slate-200">{msg.node_name}</span>
-                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800/60 text-slate-400 font-mono">
+                  <span className="font-semibold text-slate-200 truncate">{msg.node_name}</span>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800/60 text-slate-400 font-mono whitespace-nowrap shrink-0">
                     {msg.node_type}
                   </span>
                   {isSuccess && (
-                    <span className="flex items-center gap-1 text-[10px] text-emerald-400 bg-emerald-950/40 px-1.5 py-0.5 rounded border border-emerald-800/40">
-                      <CheckCircle2 className="w-3 h-3" /> {t('common.success')}
+                    <span className="flex items-center gap-1 text-[10px] text-emerald-400 bg-emerald-950/40 px-1.5 py-0.5 rounded border border-emerald-800/40 whitespace-nowrap shrink-0">
+                      <CheckCircle2 className="w-3 h-3 shrink-0" /> {t('common.success')}
                     </span>
                   )}
                   {isError && (
-                    <span className="flex items-center gap-1 text-[10px] text-rose-400 bg-rose-950/40 px-1.5 py-0.5 rounded border border-rose-800/40">
-                      <AlertCircle className="w-3 h-3" /> {t('common.error')}
+                    <span className="flex items-center gap-1 text-[10px] text-rose-400 bg-rose-950/40 px-1.5 py-0.5 rounded border border-rose-800/40 whitespace-nowrap shrink-0">
+                      <AlertCircle className="w-3 h-3 shrink-0" /> {t('common.error')}
                     </span>
                   )}
                   {isThinking && (
-                    <span className="text-[10px] text-indigo-300 bg-indigo-950/50 px-1.5 py-0.5 rounded border border-indigo-800/50">
+                    <span className="text-[10px] text-indigo-300 bg-indigo-950/50 px-1.5 py-0.5 rounded border border-indigo-800/50 whitespace-nowrap shrink-0">
                       {t('runner.agentThinking')}
                     </span>
                   )}
                   {isToolCall && (
-                    <span className="text-[10px] text-sky-300 bg-sky-950/50 px-1.5 py-0.5 rounded border border-sky-800/50 font-mono">
+                    <span className="text-[10px] text-sky-300 bg-sky-950/50 px-1.5 py-0.5 rounded border border-sky-800/50 font-mono whitespace-nowrap shrink-0">
                       {t('runner.agentToolCall')}
                     </span>
                   )}
                   {isToolResult && (
-                    <span className="text-[10px] text-teal-300 bg-teal-950/50 px-1.5 py-0.5 rounded border border-teal-800/50 font-mono">
+                    <span className="text-[10px] text-teal-300 bg-teal-950/50 px-1.5 py-0.5 rounded border border-teal-800/50 font-mono whitespace-nowrap shrink-0">
                       {t('runner.agentToolResult')}
                     </span>
                   )}
                 </div>
-                <div className="text-[10px] text-slate-500 font-mono">{formatTime(msg.created_at)}</div>
+                <div className="text-[10px] text-slate-500 font-mono whitespace-nowrap shrink-0">
+                  {formatTime(msg.created_at)}
+                </div>
               </div>
 
               {/* 본문 메시지 */}
@@ -230,21 +240,21 @@ export const ChatTimeline: React.FC<ChatTimelineProps> = ({
                 </div>
               )}
 
-              {/* 스크린샷 썸네일 (WebP 80% 압축 이미지) */}
+              {/* 스크린샷 썸네일 (WebP 80% 압축 이미지, 좁은 버블 밖으로 튀어나오지 않도록 max-w-full 보장) */}
               {msg.image_path && (
-                <div className="mt-3 pt-2 border-t border-slate-800/60">
+                <div className="mt-3 pt-2 border-t border-slate-800/60 min-w-0">
                   <div className="text-[11px] text-slate-400 flex items-center gap-1.5 mb-1.5">
-                    <ImageIcon className="w-3.5 h-3.5 text-blue-400" />
-                    <span>{t('settings.captureScreenLabel')}:</span>
+                    <ImageIcon className="w-3.5 h-3.5 text-blue-400 shrink-0" />
+                    <span className="truncate">{t('settings.captureScreenLabel')}:</span>
                   </div>
                   <div
                     onClick={() => onSelectImage(resolveImageUrl(msg.image_path)!, `${msg.node_name} - ${msg.content}`)}
-                    className="group relative inline-block rounded-xl overflow-hidden border border-slate-700/80 cursor-pointer bg-slate-950 hover:border-blue-500 transition-all shadow-md"
+                    className="group relative inline-block max-w-full rounded-xl overflow-hidden border border-slate-700/80 cursor-pointer bg-slate-950 hover:border-blue-500 transition-all shadow-md"
                   >
                     <img
                       src={resolveImageUrl(msg.image_path)}
                       alt="Capture Thumbnail"
-                      className="max-h-48 max-w-sm object-cover group-hover:scale-[1.02] transition-transform duration-200"
+                      className="block max-h-48 w-full max-w-full sm:max-w-sm object-cover group-hover:scale-[1.02] transition-transform duration-200"
                     />
                     <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1.5 text-white text-xs font-medium backdrop-blur-[2px]">
                       <Maximize2 className="w-4 h-4" />

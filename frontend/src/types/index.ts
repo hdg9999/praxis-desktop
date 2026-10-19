@@ -148,6 +148,24 @@ declare global {
       onPickerResetHighlight: (callback: () => void) => void;
       sendSelectedElement: (data: any) => void;
       sendHoverElement: (data: any) => void;
+
+      // Agent Manager & System Tray IPC
+      openFlowBuilderWindow?: (payload?: { flowId?: string; sessionId?: string; tab?: 'builder' | 'runner' }) => Promise<boolean>;
+      openAgentManagerWindow?: (payload?: { tab?: 'workflows' | 'history'; sessionId?: string }) => Promise<boolean>;
+      openRunnerSettingsWindow?: () => Promise<boolean>;
+      closeRunnerSettingsWindow?: () => Promise<boolean>;
+      hideAgentManagerToTray?: () => Promise<boolean>;
+      showWorkflowNotification?: (payload: {
+        title: string;
+        body: string;
+        status: 'SUCCESS' | 'FAILED' | 'CANCELLED' | string;
+        flowId?: string;
+        flowName?: string;
+        sessionId?: string;
+      }) => Promise<boolean>;
+      onOpenFromManager?: (callback: (payload: { flowId?: string; sessionId?: string; tab?: 'builder' | 'runner' }) => void) => void;
+      onAgentManagerShown?: (callback: (payload?: { tab?: 'workflows' | 'history'; sessionId?: string }) => void) => void;
     };
   }
 }
+

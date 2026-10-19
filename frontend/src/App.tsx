@@ -646,6 +646,32 @@ export function App() {
     if (target) selectFlow(target);
   };
 
+  // Agent Manager의 '실행 기록' 탭에서 'Flow Builder에서 보기' 버튼 클릭 시 연동
+  useEffect(() => {
+    if (window.electronAPI?.onOpenFromManager) {
+      window.electronAPI.onOpenFromManager(async (payload) => {
+        try {
+          const latestFlows = await fetchFlows();
+          setFlows(latestFlows);
+          if (payload?.flowId) {
+            const target = latestFlows.find((f) => f.id === payload.flowId);
+            if (target) {
+              selectFlow(target);
+            }
+          }
+          const latestSessions = await fetchSessions();
+          setSessions(latestSessions);
+          if (payload?.sessionId) {
+            setActiveSessionId(payload.sessionId);
+          }
+          setCurrentTab(payload?.tab || 'builder');
+        } catch (err) {
+          console.warn('[FlowBuilder] Agent Manager 연동 처리 중 오류:', err);
+        }
+      });
+    }
+  }, []);
+
   const handleNewFlow = () => {
     const defaultModel = flowSettings.default_llm_model || ollamaModels[0] || 'llama3';
     const nextSettings: WorkflowSettings = {

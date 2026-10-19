@@ -540,5 +540,42 @@ export const en: TranslationType = {
     outputVarHelp: 'Only variables declared in the Workflow Variable Manager can be assigned as output variables.',
     quickInsertLabel: 'Quick Insert Variable (Click or Drag):',
   },
+
+  // Agent Manager UI
+  agentManager: {
+    title: 'Agent Manager',
+    subtitle: 'Execute Saved Workflows & Manage History',
+    tabWorkflows: 'Saved Workflows',
+    tabHistory: 'Execution History',
+    searchPlaceholder: 'Search saved workflows by name or description...',
+    runWorkflowBtn: 'Run',
+    runningBtn: 'Running...',
+    noSavedWorkflows: 'No saved workflows found. Please create and save a workflow in Flow Builder first.',
+    openInFlowBuilder: 'View in Flow Builder',
+    openInFlowBuilderTooltip: 'Open Flow Builder window and inspect the current workflow and execution history.',
+    runnerSettingsBtn: 'Runner Settings',
+    nodeCount: '{count} nodes',
+    varCount: '{count} vars',
+    delayBadge: 'Delay {sec}s',
+    updatedAt: 'Updated: {date}',
+    toastSuccessTitle: 'Workflow Completed',
+    toastSuccessBody: "Workflow '{name}' completed successfully.",
+    toastFailedTitle: 'Workflow Failed / Error',
+    toastFailedBody: "Error while running '{name}': {error}",
+    toastFailedDefault: 'An error occurred during execution. Check the Execution History tab for details.',
+    toastCancelledTitle: 'Workflow Cancelled',
+    toastCancelledBody: "Workflow '{name}' was stopped (cancelled).",
+  },
+
+  // Runner Settings (Template Window)
+  runnerSettings: {
+    title: 'Runner Settings',
+    subtitle: 'Agent Runner & Manager Configuration',
+    templateNoticeTitle: 'Runner Settings Template',
+    templateNoticeDesc: 'Detailed specifications for Runner Settings are being finalized. Options for notifications, hotkeys, and background execution will be added here.',
+    saveBtn: 'Save',
+    savedFeedback: 'Settings saved.',
+  },
 };
+
 

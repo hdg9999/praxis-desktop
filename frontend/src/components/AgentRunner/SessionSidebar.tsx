@@ -8,6 +8,7 @@ interface SessionSidebarProps {
   activeSessionId: string | null;
   onSelectSession: (sessionId: string) => void;
   onDeleteSession: (sessionId: string) => void;
+  compact?: boolean;
 }
 
 export const SessionSidebar: React.FC<SessionSidebarProps> = ({
@@ -15,6 +16,7 @@ export const SessionSidebar: React.FC<SessionSidebarProps> = ({
   activeSessionId,
   onSelectSession,
   onDeleteSession,
+  compact = false,
 }) => {
   const { t } = useI18n();
 
@@ -22,28 +24,28 @@ export const SessionSidebar: React.FC<SessionSidebarProps> = ({
     switch (status) {
       case 'RUNNING':
         return (
-          <span className="flex items-center gap-1 text-[10px] text-blue-400 font-medium">
+          <span className="flex items-center gap-1 text-[10px] text-blue-400 font-medium shrink-0">
             <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-ping" />
             {t('runner.statusRunning')}
           </span>
         );
       case 'SUCCESS':
         return (
-          <span className="flex items-center gap-1 text-[10px] text-emerald-400 font-medium">
+          <span className="flex items-center gap-1 text-[10px] text-emerald-400 font-medium shrink-0">
             <CheckCircle2 className="w-3 h-3" />
             {t('runner.statusSuccess')}
           </span>
         );
       case 'FAILED':
         return (
-          <span className="flex items-center gap-1 text-[10px] text-rose-400 font-medium">
+          <span className="flex items-center gap-1 text-[10px] text-rose-400 font-medium shrink-0">
             <XCircle className="w-3 h-3" />
             {t('runner.statusFailed')}
           </span>
         );
       case 'CANCELLED':
         return (
-          <span className="flex items-center gap-1 text-[10px] text-amber-400 font-medium">
+          <span className="flex items-center gap-1 text-[10px] text-amber-400 font-medium shrink-0">
             <AlertTriangle className="w-3 h-3" />
             {t('runner.statusCancelled')}
           </span>
@@ -63,11 +65,15 @@ export const SessionSidebar: React.FC<SessionSidebarProps> = ({
   };
 
   return (
-    <aside className="w-72 bg-slate-900 border-r border-slate-800 flex flex-col h-full select-none">
-      <div className="p-4 border-b border-slate-800 flex items-center gap-2">
-        <History className="w-4 h-4 text-slate-400" />
-        <h2 className="text-sm font-semibold text-slate-200">{t('runner.sidebarTitle')}</h2>
-        <span className="ml-auto text-xs bg-slate-800 text-slate-400 px-2 py-0.5 rounded-full font-mono">
+    <aside
+      className={`${
+        compact ? 'w-48 sm:w-56' : 'w-72'
+      } shrink-0 bg-slate-900 border-r border-slate-800 flex flex-col h-full select-none`}
+    >
+      <div className="p-3.5 border-b border-slate-800 flex items-center gap-2">
+        <History className="w-4 h-4 text-slate-400 shrink-0" />
+        <h2 className="text-xs font-semibold text-slate-200 truncate">{t('runner.sidebarTitle')}</h2>
+        <span className="ml-auto text-xs bg-slate-800 text-slate-400 px-2 py-0.5 rounded-full font-mono shrink-0">
           {sessions.length}
         </span>
       </div>
