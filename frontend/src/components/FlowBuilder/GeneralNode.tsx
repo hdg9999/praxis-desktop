@@ -26,11 +26,12 @@ import {
 import { FlowNodeData } from '../../types';
 import { useI18n } from '../../i18n';
 
-const GeneralNode: React.FC<NodeProps> = ({ id, data, selected }) => {
+const GeneralNode: React.FC<NodeProps> = ({ id, data, type, selected }) => {
   const { deleteElements } = useReactFlow();
   const { t } = useI18n();
-  const nodeData = data as unknown as FlowNodeData;
-  const subtype = nodeData.type.replace('general_', '');
+  const nodeData = (data || {}) as unknown as FlowNodeData;
+  const resolvedType = nodeData.type || (type as string) || 'general_delay';
+  const subtype = String(resolvedType).replace('general_', '');
 
   const handleDelete = (evt: React.MouseEvent) => {
     evt.stopPropagation();

@@ -351,6 +351,16 @@ export function analyzeNodeVariableUsage(node: Node): {
     }
   }
 
+  // 서브 워크플로우 호출(flow_call) 노드의 변수 매핑에서도 참조 변수 수집
+  if (nodeType === 'flow_call' && Array.isArray(cfg.variable_mappings)) {
+    for (const mp of cfg.variable_mappings) {
+      const pVar = (mp?.parent_var || '').trim();
+      if (pVar) {
+        referencedSet.add(pVar);
+      }
+    }
+  }
+
   return {
     outputVar,
     expectedOutputTypes: outReq.expectedTypes,

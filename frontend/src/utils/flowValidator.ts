@@ -1,5 +1,5 @@
 import { Node, Edge, Connection } from '@xyflow/react';
-import { WorkflowVariable, FlowNodeData } from '../types';
+import { WorkflowVariable, FlowNodeData, Flow, SubflowVariableMapping } from '../types';
 import {
   SYSTEM_VARIABLE_NAMES,
   analyzeNodeVariableUsage,
@@ -93,13 +93,89 @@ export function checkConnectionValidity(
 }
 
 /**
+ * 워크플로우 간 정적 호출 그래프(Call Graph)에서
+ * currentFlowId -> ... -> targetFlowId -> ... -> currentFlowId 형태의
+ * 직·간접 순환 호출(무한 루프)이 형성되는지 탐지하고, 발견 시 순환 경로(이름 배열)를 반환합니다.
+ */
+export function detectSubflowCallCycle(
+  currentFlowId: string | undefined,
+  currentFlowName: string | undefined,
+  targetFlowId: string,
+  allFlows?: Flow[]
+): string[] | null {
+  const cleanTarget = (targetFlowId || '').trim();
+  if (!cleanTarget) return null;
+
+  const currId = (currentFlowId || '').trim();
+  const currName = (currentFlowName || currId || '현재 워크플로우').trim();
+
+  // 1) 자기 자신을 직접 호출하는 경우
+  if (currId && cleanTarget === currId) {
+    return [currName, currName];
+  }
+
+  if (!allFlows || allFlows.length === 0) {
+    return null;
+  }
+
+  const flowMap = new Map<string, Flow>();
+  for (const f of allFlows) {
+    flowMap.set(f.id, f);
+  }
+
+  // targetFlowId에서 출발하여 다시 currId에 도달하는지, 혹은 서브플로우들끼리 순환이 있는지 DFS 탐색
+  const visited = new Set<string>();
+  const visiting = new Set<string>();
+
+  const dfs = (flowId: string, pathIds: string[], pathNames: string[]): string[] | null => {
+    if (currId && flowId === currId) {
+      return [...pathNames, currName];
+    }
+    if (visiting.has(flowId)) {
+      const fObj = flowMap.get(flowId);
+      return [...pathNames, fObj?.name || flowId];
+    }
+    if (visited.has(flowId)) {
+      return null;
+    }
+
+    const fObj = flowMap.get(flowId);
+    if (!fObj) return null;
+
+    visiting.add(flowId);
+    const nextPathIds = [...pathIds, flowId];
+    const nextPathNames = [...pathNames, fObj.name || flowId];
+
+    const subNodes = fObj.graph_data?.nodes || [];
+    for (const sn of subNodes) {
+      if (sn?.type === 'flow_call') {
+        const nextTargetId = String(sn?.data?.config?.target_flow_id || '').trim();
+        if (nextTargetId) {
+          const cycle = dfs(nextTargetId, nextPathIds, nextPathNames);
+          if (cycle) return cycle;
+        }
+      }
+    }
+
+    visiting.delete(flowId);
+    visited.add(flowId);
+    return null;
+  };
+
+  return dfs(cleanTarget, currId ? [currId] : [], [currName]);
+}
+
+/**
  * 전체 워크플로우 그래프의 무결성 및 유효성 검사 (변수 선언 및 타입 일치성 검사 포함)
  */
 export function validateFlow(
   nodes: Node[],
   edges: Edge[],
   t?: (key: string, params?: Record<string, any>) => string,
-  variables?: WorkflowVariable[]
+  variables?: WorkflowVariable[],
+  allFlows?: Flow[],
+  currentFlowId?: string,
+  currentFlowName?: string
 ): FlowValidationResult {
   const errors: string[] = [];
   const warnings: string[] = [];
@@ -119,6 +195,9 @@ export function validateFlow(
 
   const startNodes = nodes.filter((n) => n.type === 'flow_start');
   const endNodes = nodes.filter((n) => n.type === 'flow_end');
+  // 그룹 노드(flow_group)는 순수 UI 시각적 컨테이너이므로 실행 체인 및 고립 노드 검사에서 제외
+  const executableNodes = nodes.filter((n) => n.type !== 'flow_group');
+  const realEdges = edges.filter((e) => !(e.data as any)?.isGroupBridge);
 
   const startNode = startNodes[0];
   const endNode = endNodes[0];
@@ -139,11 +218,11 @@ export function validateFlow(
 
   // 인접 리스트 생성
   const adj = new Map<string, string[]>();
-  for (const n of nodes) {
+  for (const n of executableNodes) {
     adj.set(n.id, []);
   }
-  for (const e of edges) {
-    if (adj.has(e.source)) {
+  for (const e of realEdges) {
+    if (adj.has(e.source) && adj.has(e.target)) {
       adj.get(e.source)!.push(e.target);
     }
   }
@@ -152,7 +231,7 @@ export function validateFlow(
   let hasCycle = false;
   const cycleNodeIds: string[] = [];
   const visitedState = new Map<string, 'unvisited' | 'visiting' | 'visited'>();
-  for (const n of nodes) visitedState.set(n.id, 'unvisited');
+  for (const n of executableNodes) visitedState.set(n.id, 'unvisited');
 
   const dfsCycle = (currId: string, path: string[]): boolean => {
     visitedState.set(currId, 'visiting');
@@ -181,7 +260,7 @@ export function validateFlow(
     return false;
   };
 
-  for (const n of nodes) {
+  for (const n of executableNodes) {
     if (visitedState.get(n.id) === 'unvisited') {
       if (dfsCycle(n.id, [])) break;
     }
@@ -220,9 +299,9 @@ export function validateFlow(
     errors.push(tr('validation.cannotCompleteNoEnd', "'끝' 노드가 없어 워크플로우를 완료할 수 없습니다."));
   }
 
-  // 5. 고립 노드(Orphan Node) 탐지
+  // 5. 고립 노드(Orphan Node) 탐지 (그룹 노드는 순수 시각적 묶음이므로 제외)
   const activeSet = new Set(activeNodeIds);
-  const orphanNodeIds = nodes
+  const orphanNodeIds = executableNodes
     .filter((n) => !activeSet.has(n.id))
     .map((n) => n.id);
 
@@ -262,16 +341,81 @@ export function validateFlow(
       }
     }
 
-    const nodeMap = new Map<string, Node>(nodes.map((n) => [n.id, n]));
-    // 활성 실행 경로에 있는 노드(또는 전체 노드)의 변수 사용 검증
+    const nodeMap = new Map<string, Node>(executableNodes.map((n) => [n.id, n]));
+    // 활성 실행 경로에 있는 노드(또는 전체 실행 가능 노드)의 변수 사용 검증
     const nodesToCheck = activeNodeIds.length > 0
       ? activeNodeIds.map((id) => nodeMap.get(id)).filter((n): n is Node => !!n)
-      : nodes;
+      : executableNodes;
 
     for (const node of nodesToCheck) {
-      if (node.type === 'flow_start' || node.type === 'flow_end') continue;
+      if (node.type === 'flow_start' || node.type === 'flow_end' || node.type === 'flow_group') continue;
       const nodeData = (node.data as unknown as FlowNodeData) || { label: node.id, type: node.type as any, config: {} };
       const nodeLabel = nodeData.label || node.id;
+      const cfg = nodeData.config || {};
+
+      // 서브 워크플로우 호출(flow_call) 노드의 대상 및 변수 매핑 유효성 검사
+      if (node.type === 'flow_call') {
+        const targetFlowId = String(cfg.target_flow_id || '').trim();
+        if (!targetFlowId) {
+          errors.push(
+            tr(
+              'validation.subflowTargetEmpty',
+              `[${nodeLabel}] 호출할 대상 워크플로우가 선택되지 않았습니다.`,
+              { node: nodeLabel }
+            )
+          );
+        } else {
+          const cycleChain = detectSubflowCallCycle(currentFlowId, currentFlowName, targetFlowId, allFlows);
+          if (cycleChain) {
+            errors.push(
+              tr(
+                'validation.subflowCycleDetected',
+                `[${nodeLabel}] 서브 워크플로우 간 순환 호출(무한 루프)이 감지되었습니다: ${cycleChain.join(' ➔ ')}`,
+                { node: nodeLabel, chain: cycleChain.join(' ➔ ') }
+              )
+            );
+          } else if (allFlows && allFlows.length > 0 && !allFlows.some((f) => f.id === targetFlowId)) {
+            errors.push(
+              tr(
+                'validation.subflowNotFound',
+                `[${nodeLabel}] 호출 대상 워크플로우를 찾을 수 없습니다. (삭제되었거나 유효하지 않음)`,
+                { node: nodeLabel }
+              )
+            );
+          }
+        }
+
+        const mappings: SubflowVariableMapping[] = Array.isArray(cfg.variable_mappings) ? cfg.variable_mappings : [];
+        const targetFlowObj = allFlows?.find((f) => f.id === targetFlowId);
+        const subVars: WorkflowVariable[] = targetFlowObj?.graph_data?.variables || [];
+        const subVarMap = new Map<string, WorkflowVariable>(subVars.map((sv) => [(sv.name || '').trim(), sv]));
+
+        for (const mp of mappings) {
+          const dir = mp.direction || 'in';
+          const pVar = (mp.parent_var || '').trim();
+          const sVar = (mp.sub_var || '').trim();
+          if (!pVar && !sVar) continue;
+          if (!pVar || !sVar) {
+            errors.push(`[${nodeLabel}] 변수 매핑에 비어있는 항목이 있습니다. 현재 워크플로우 변수와 서브 워크플로우 변수를 모두 선택해 주세요.`);
+            continue;
+          }
+          if ((dir === 'in' || dir === 'inout') && !varMap.has(pVar) && !SYSTEM_VARIABLE_NAMES.has(pVar)) {
+            errors.push(`[${nodeLabel}] 입력(In) 매핑에 선언되지 않은 변수 '${pVar}'이(가) 지정되었습니다.`);
+          }
+          if (dir === 'out' || dir === 'inout') {
+            if (SYSTEM_VARIABLE_NAMES.has(pVar)) {
+              errors.push(`[${nodeLabel}] 시스템 내장 변수('${pVar}')에는 서브 워크플로우 출력(Out) 값을 덮어쓸 수 없습니다.`);
+            } else if (!varMap.has(pVar)) {
+              errors.push(`[${nodeLabel}] 출력(Out) 매핑에 선언되지 않은 변수 '${pVar}'이(가) 지정되었습니다.`);
+            }
+          }
+          if (targetFlowObj && subVarMap.size > 0 && !subVarMap.has(sVar)) {
+            warnings.push(`[${nodeLabel}] 매핑된 서브 워크플로우 변수 '${sVar}'이(가) 대상 워크플로우('${targetFlowObj.name}')에 선언되어 있지 않습니다.`);
+          }
+        }
+        continue;
+      }
+
       const usage = analyzeNodeVariableUsage(node);
 
       // (a) 출력 변수(output_variable) 선언 여부 및 타입 호환성 검사

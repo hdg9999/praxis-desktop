@@ -107,6 +107,10 @@ export const en: TranslationType = {
       label: 'AI & Intelligence',
       description: 'Local Ollama LLM reasoning and ReAct autonomous agent',
     },
+    workflow: {
+      label: 'Workflow Structure / Control',
+      description: 'Visual node grouping and sub-workflow module invocation',
+    },
   },
 
   // 스킬 노드 아이템 (Skill Registry Items)
@@ -206,6 +210,14 @@ export const en: TranslationType = {
     agent_basic: {
       label: 'Basic Agent',
       desc: 'Autonomous ReAct agent deciding mouse/keyboard actions to achieve goal',
+    },
+    flow_group: {
+      label: 'Group Node',
+      desc: 'Visual container to group related nodes and collapse/expand them',
+    },
+    flow_call: {
+      label: 'Call Sub-Workflow',
+      desc: 'Invoke another saved workflow with isolated In/Out variable mappings',
     },
   },
 

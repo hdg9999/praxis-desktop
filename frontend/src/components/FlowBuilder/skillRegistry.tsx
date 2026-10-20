@@ -23,6 +23,9 @@ import {
   XCircle,
   Power,
   Ban,
+  FolderKanban,
+  Workflow,
+  GitBranchPlus,
 } from 'lucide-react';
 import { NodeType } from '../../types';
 
@@ -86,6 +89,14 @@ export const SKILL_CATEGORIES: SkillCategory[] = [
     icon: <Sparkles className="w-3.5 h-3.5 text-purple-400" />,
     badgeColor: 'bg-purple-900/40 text-purple-300 border-purple-700/50',
     headerColor: 'hover:text-purple-300',
+  },
+  {
+    id: 'workflow',
+    label: '워크플로우 구성 / 제어',
+    description: '노드 시각적 그룹화 및 서브 워크플로우 모듈 호출',
+    icon: <Workflow className="w-3.5 h-3.5 text-teal-400" />,
+    badgeColor: 'bg-teal-900/40 text-teal-300 border-teal-700/50',
+    headerColor: 'hover:text-teal-300',
   },
 ];
 
@@ -380,6 +391,36 @@ export const SKILL_ITEMS: SkillItem[] = [
     },
     tags: ['ai', 'agent', '에이전트', '자율', '지능', '추론', '도구', '스킬', 'ollama', '기본에이전트'],
     isAi: true,
+  },
+
+  // 5. 워크플로우 구성 / 제어
+  {
+    type: 'flow_group',
+    categoryId: 'workflow',
+    label: '그룹 노드',
+    desc: '연관된 노드들을 시각적으로 묶고 접었다 펼 수 있는 컨테이너 노드',
+    icon: <FolderKanban className="w-4 h-4 text-teal-400" />,
+    defaultConfig: {
+      collapsed: false,
+      width: 560,
+      height: 260,
+      color: 'indigo',
+      description: '',
+    },
+    tags: ['그룹', '묶음', '폴더', '컨테이너', '접기', '펼치기', '정리', 'group', 'folder', 'container', 'collapse'],
+  },
+  {
+    type: 'flow_call',
+    categoryId: 'workflow',
+    label: '다른 워크플로우 호출',
+    desc: '기존에 저장된 서브 워크플로우를 호출하고 입출력 변수를 매핑하여 실행',
+    icon: <GitBranchPlus className="w-4 h-4 text-cyan-400" />,
+    defaultConfig: {
+      target_flow_id: '',
+      target_flow_name: '',
+      variable_mappings: [],
+    },
+    tags: ['서브워크플로우', '호출', '다른워크플로우', '모듈', '재사용', '매핑', 'subflow', 'workflow', 'call', 'invoke'],
   },
 ];
 

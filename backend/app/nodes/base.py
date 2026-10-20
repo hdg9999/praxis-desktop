@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 import json
 import re
-from typing import Dict, Any, Optional, Callable, Awaitable, Set
+from typing import Dict, Any, Optional, Callable, Awaitable, Set, List
 from pydantic import BaseModel
 
 # 시스템 내장 읽기 전용 예약 변수 목록
@@ -122,6 +122,11 @@ class ExecutionContext:
     strict_variables: bool = False
     flow_settings: Dict[str, Any] = {}
     variables: Dict[str, Any] = {}
+    call_stack: List[str] = []
+    call_stack_names: List[str] = []
+    max_call_depth: int = 5
+    step_counter: Dict[str, int] = {}
+    max_total_steps: int = 500
 
     def __init__(
         self,
@@ -132,6 +137,11 @@ class ExecutionContext:
         variable_schemas: Optional[Dict[str, Dict[str, Any]]] = None,
         strict_variables: bool = False,
         flow_settings: Optional[Dict[str, Any]] = None,
+        call_stack: Optional[List[str]] = None,
+        call_stack_names: Optional[List[str]] = None,
+        max_call_depth: int = 5,
+        step_counter: Optional[Dict[str, int]] = None,
+        max_total_steps: int = 500,
     ):
         self.session_id = session_id
         self.event_callback = event_callback
@@ -140,6 +150,11 @@ class ExecutionContext:
         self.strict_variables: bool = strict_variables
         self.flow_settings: Dict[str, Any] = flow_settings or {}
         self.variables: Dict[str, Any] = {}
+        self.call_stack: List[str] = list(call_stack) if call_stack is not None else []
+        self.call_stack_names: List[str] = list(call_stack_names) if call_stack_names is not None else []
+        self.max_call_depth: int = max_call_depth
+        self.step_counter: Dict[str, int] = step_counter if step_counter is not None else {"count": 0}
+        self.max_total_steps: int = max_total_steps
 
         # 1. 선언된 변수 스키마가 있으면 기본값(defaultValue)을 타입 정규화하여 초기화
         for var_name, schema in self.variable_schemas.items():
@@ -154,6 +169,15 @@ class ExecutionContext:
                     self.variables[k] = coerce_variable_value(v, self.variable_schemas[k].get("type", "string"))
                 else:
                     self.variables[k] = v
+
+    def increment_and_check_step_limit(self) -> None:
+        """세션 전체(서브 워크플로우 포함) 누적 실행 스텝 수를 증가시키고 한계 초과 시 예외를 발생시킵니다."""
+        self.step_counter["count"] = self.step_counter.get("count", 0) + 1
+        if self.step_counter["count"] > self.max_total_steps:
+            raise RuntimeError(
+                f"세션당 최대 누적 노드 실행 횟수({self.max_total_steps}회)를 초과하여 안전을 위해 실행을 강제 중단했습니다. "
+                f"(과도한 서브 워크플로우 연쇄 호출 또는 반복 실행 감지)"
+            )
 
     def is_cancelled(self) -> bool:
         return self.check_cancelled()

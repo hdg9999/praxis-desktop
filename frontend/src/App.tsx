@@ -201,10 +201,10 @@ export function App() {
     timestamp: number;
   } | null>(null);
 
-  // 실시간 워크플로우 유효성 검사 (시작-끝 도달성, 무한루프, 고립 노드, 변수 선언/타입 검증 포함)
+  // 실시간 워크플로우 유효성 검사 (시작-끝 도달성, 무한루프, 고립 노드, 변수 선언/타입 검증, 서브 워크플로우 순환 호출 검증 포함)
   const validation = useMemo(
-    () => validateFlow(nodes, edges, t, variables),
-    [nodes, edges, t, variables]
+    () => validateFlow(nodes, edges, t, variables, flows, activeFlow?.id, activeFlow?.name),
+    [nodes, edges, t, variables, flows, activeFlow?.id, activeFlow?.name]
   );
 
   // 실행 취소(Undo) / 다시 실행(Redo) 히스토리 훅
@@ -526,10 +526,38 @@ export function App() {
     }
   };
 
-  // 기존 Flow 로드 시 '시작'/'끝' 노드 부재 시 자동 마이그레이션
+  // 기존 Flow 로드 시 '시작'/'끝' 노드 부재 시 자동 마이그레이션 및 노드 데이터 스키마 정규화
   const ensureStartAndEndNodes = (rawNodes: Node[], rawEdges: Edge[]): { nodes: Node[]; edges: Edge[] } => {
-    let currentNodes = [...rawNodes];
-    let currentEdges = [...rawEdges];
+    let currentNodes = Array.isArray(rawNodes)
+      ? rawNodes
+          .filter((n) => n && typeof n === 'object')
+          .map((n, idx) => {
+            const rawData = (n.data && typeof n.data === 'object' ? n.data : {}) as Record<string, any>;
+            const resolvedType = (n.type || rawData.type || 'general_delay') as NodeType;
+            const resolvedConfig =
+              rawData.config && typeof rawData.config === 'object'
+                ? rawData.config
+                : (n as any).config && typeof (n as any).config === 'object'
+                ? (n as any).config
+                : {};
+            return {
+              ...n,
+              id: String(n.id || `node_${idx}`),
+              type: resolvedType,
+              position: {
+                x: typeof n.position?.x === 'number' && !Number.isNaN(n.position.x) ? n.position.x : idx * 200,
+                y: typeof n.position?.y === 'number' && !Number.isNaN(n.position.y) ? n.position.y : 150,
+              },
+              data: {
+                ...rawData,
+                type: resolvedType,
+                label: rawData.label || resolvedType,
+                config: resolvedConfig,
+              },
+            } as Node;
+          })
+      : [];
+    let currentEdges = Array.isArray(rawEdges) ? [...rawEdges] : [];
 
     if (currentNodes.length === 0) {
       return { nodes: INITIAL_NODES, edges: INITIAL_EDGES };
@@ -1010,10 +1038,156 @@ export function App() {
       return; // 시작 및 끝 노드는 어떤 방법으로도 삭제 불가
     }
     takeSnapshot(nodes, edges);
-    setNodes((nds) => nds.filter((n) => n.id !== nodeId));
+    const isDeletingGroup = target?.type === 'flow_group';
+    setNodes((nds) =>
+      nds
+        .filter((n) => n.id !== nodeId)
+        .map((n) => {
+          if (isDeletingGroup && (n.data as any)?.config?.group_id === nodeId) {
+            const nextCfg = { ...((n.data as any)?.config || {}) };
+            delete nextCfg.group_id;
+            return {
+              ...n,
+              hidden: false,
+              data: {
+                ...n.data,
+                config: nextCfg,
+              },
+            };
+          }
+          return n;
+        })
+    );
     setEdges((eds) => eds.filter((e) => e.source !== nodeId && e.target !== nodeId));
     setSelectedNode((prev) => (prev?.id === nodeId ? null : prev));
   }, [nodes, edges, setNodes, setEdges, takeSnapshot]);
+
+  // 기존 노드를 그룹에 포함하거나 그룹에서 해제하는 핸들러 (우측 Inspector 연동)
+  const handleAssignNodeToGroup = useCallback((nodeId: string, groupId: string | null) => {
+    takeSnapshot(nodes, edges);
+    setNodes((nds) => {
+      const groupNode = groupId ? nds.find((g) => g.id === groupId && g.type === 'flow_group') : null;
+      const childrenInGroup = groupId
+        ? nds.filter((n) => (n.data as any)?.config?.group_id === groupId && n.id !== nodeId)
+        : [];
+
+      return nds.map((n) => {
+        if (n.id === nodeId) {
+          const nextCfg = { ...((n.data as any)?.config || {}) };
+          let nextPos = { ...n.position };
+          if (groupId && groupNode) {
+            nextCfg.group_id = groupId;
+            const gCfg = (groupNode.data as any)?.config || {};
+            const gw = Math.max(320, Number(gCfg.width) || 560);
+            const gh = Math.max(180, Number(gCfg.height) || 260);
+            const insideAlready =
+              n.position.x >= groupNode.position.x &&
+              n.position.x <= groupNode.position.x + gw &&
+              n.position.y >= groupNode.position.y &&
+              n.position.y <= groupNode.position.y + gh;
+            if (!insideAlready) {
+              const offsetX = childrenInGroup.length > 0
+                ? Math.max(...childrenInGroup.map((c) => c.position.x)) + 220
+                : groupNode.position.x + 30;
+              nextPos = { x: offsetX, y: groupNode.position.y + 75 };
+            }
+          } else {
+            delete nextCfg.group_id;
+          }
+          return {
+            ...n,
+            position: nextPos,
+            data: {
+              ...n.data,
+              config: nextCfg,
+            },
+          };
+        }
+        return n;
+      });
+    });
+  }, [nodes, edges, setNodes, takeSnapshot]);
+
+  // 그룹 내부에 새 스킬 노드를 즉시 생성하여 포함시키는 핸들러 (우측 Inspector 연동)
+  const handleAddNewSkillToGroup = useCallback((
+    groupId: string,
+    type: NodeType,
+    label: string,
+    defaultConfig: Record<string, any>
+  ) => {
+    takeSnapshot(nodes, edges);
+    setNodes((prevNodes) => {
+      const groupNode = prevNodes.find((n) => n.id === groupId && n.type === 'flow_group');
+      if (!groupNode) return prevNodes;
+
+      const childrenInGroup = prevNodes.filter(
+        (n) => (n.data as any)?.config?.group_id === groupId && n.type !== 'flow_group'
+      );
+
+      const groupX = groupNode.position.x;
+      const groupY = groupNode.position.y;
+      const currCfg = (groupNode.data as any)?.config || {};
+      const currWidth = Math.max(320, Number(currCfg.width) || 560);
+      const currHeight = Math.max(180, Number(currCfg.height) || 260);
+
+      let nextX = groupX + 30;
+      let nextY = groupY + 75;
+      if (childrenInGroup.length > 0) {
+        const maxRightX = Math.max(...childrenInGroup.map((c) => c.position.x));
+        nextX = maxRightX + 230;
+        nextY = childrenInGroup[childrenInGroup.length - 1].position.y;
+      }
+
+      const finalConfig: Record<string, any> = {
+        ...defaultConfig,
+        group_id: groupId,
+      };
+      if ((type === 'agent_basic' || type === 'ai_ollama')) {
+        const preferredModel =
+          flowSettings.default_llm_model?.trim() ||
+          (ollamaModels.length > 0 ? ollamaModels[0] : finalConfig.model);
+        if (preferredModel) {
+          finalConfig.model = preferredModel;
+        }
+      }
+
+      const newNode: Node = {
+        id: `node_${Date.now()}`,
+        type,
+        position: { x: nextX, y: nextY },
+        data: {
+          label,
+          type,
+          config: finalConfig,
+        },
+      };
+
+      const neededWidth = Math.max(currWidth, (nextX - groupX) + 250);
+      const updated = prevNodes.map((n) => {
+        if (n.id === groupId) {
+          const updatedGroup = {
+            ...n,
+            data: {
+              ...n.data,
+              config: {
+                ...currCfg,
+                collapsed: false,
+                width: neededWidth,
+                height: currHeight,
+              },
+            },
+          };
+          if (selectedNode?.id === groupId) {
+            setSelectedNode(updatedGroup);
+          }
+          return updatedGroup;
+        }
+        return n;
+      });
+
+      return [...updated, newNode];
+    });
+  }, [nodes, edges, setNodes, takeSnapshot, flowSettings.default_llm_model, ollamaModels, selectedNode?.id]);
 
   const handleUndo = useCallback(() => {
     const previous = undo(nodes, edges);
@@ -1182,6 +1356,12 @@ export function App() {
                 variables={variables}
                 onDeclareVariable={handleDeclareVariable}
                 externalInsertTrigger={externalInsertTrigger}
+                flows={flows}
+                activeFlowId={activeFlow?.id}
+                activeFlowName={activeFlow?.name}
+                allNodes={nodes}
+                onAssignNodeToGroup={handleAssignNodeToGroup}
+                onAddNewSkillToGroup={handleAddNewSkillToGroup}
               />
             )}
           </div>
@@ -1250,4 +1430,54 @@ export function App() {
   );
 }
 
-export default App;
+class StudioErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { hasError: boolean; errorMessage: string }
+> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false, errorMessage: '' };
+  }
+
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, errorMessage: error?.message || String(error) };
+  }
+
+  componentDidCatch(error: Error, info: React.ErrorInfo) {
+    console.error('[StudioErrorBoundary] 렌더링 오류 포착:', error, info);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="flex flex-col items-center justify-center w-screen h-screen bg-slate-950 text-slate-100 p-6 select-none">
+          <div className="max-w-md w-full bg-slate-900 border border-rose-800/60 rounded-2xl p-6 shadow-2xl text-center space-y-4">
+            <div className="text-lg font-bold text-rose-400">화면 렌더링 중 오류가 발생했습니다</div>
+            <p className="text-xs text-slate-400 leading-relaxed break-all bg-slate-950 p-3 rounded-lg border border-slate-800 font-mono">
+              {this.state.errorMessage}
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                this.setState({ hasError: false, errorMessage: '' });
+                window.location.reload();
+              }}
+              className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-lg transition cursor-pointer"
+            >
+              화면 다시 불러오기
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+export default function AppWithBoundary() {
+  return (
+    <StudioErrorBoundary>
+      <App />
+    </StudioErrorBoundary>
+  );
+}

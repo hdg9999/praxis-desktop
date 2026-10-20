@@ -105,6 +105,10 @@ export const ko = {
       label: 'AI 인공지능',
       description: '로컬 Ollama LLM 추론 및 ReAct 자율 에이전트',
     },
+    workflow: {
+      label: '워크플로우 구성 / 제어',
+      description: '노드 시각적 그룹화 및 서브 워크플로우 모듈 호출',
+    },
   },
 
   // 스킬 노드 아이템 (Skill Registry Items)
@@ -204,6 +208,14 @@ export const ko = {
     agent_basic: {
       label: '기본 에이전트',
       desc: '사용자 지시 목표 달성을 위해 마우스/키보드 스킬을 자율 판단 실행',
+    },
+    flow_group: {
+      label: '그룹 노드',
+      desc: '연관된 노드들을 시각적으로 묶고 접었다 펼 수 있는 컨테이너 노드',
+    },
+    flow_call: {
+      label: '다른 워크플로우 호출',
+      desc: '기존에 저장된 서브 워크플로우를 호출하고 입출력 변수를 매핑하여 실행',
     },
   },
 

@@ -1,6 +1,8 @@
 export type NodeType = 
   | 'flow_start'
   | 'flow_end'
+  | 'flow_group'
+  | 'flow_call'
   | 'general_mouse_click'
   | 'general_mouse_move'
   | 'general_mouse_drag'
@@ -23,6 +25,29 @@ export type NodeType =
   | 'general_kill_process'
   | 'ai_ollama'
   | 'agent_basic';
+
+export type SubflowMappingDirection = 'in' | 'out' | 'inout';
+
+export interface SubflowVariableMapping {
+  id?: string;
+  direction: SubflowMappingDirection;
+  parent_var: string;
+  sub_var: string;
+}
+
+export interface GroupNodeConfig {
+  collapsed?: boolean;
+  width?: number;
+  height?: number;
+  color?: 'indigo' | 'emerald' | 'amber' | 'sky' | 'purple' | 'rose' | 'slate';
+  description?: string;
+}
+
+export interface SubflowNodeConfig {
+  target_flow_id?: string;
+  target_flow_name?: string;
+  variable_mappings?: SubflowVariableMapping[];
+}
 
 export interface AgentNodeConfig {
   llm_backend?: string;

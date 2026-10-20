@@ -39,10 +39,28 @@ import {
   Plus,
   GripVertical,
   AlertCircle,
+  FolderKanban,
+  GitBranchPlus,
+  Workflow,
+  ArrowRight,
+  ArrowLeft,
+  ArrowLeftRight,
+  ChevronDown,
+  ChevronRight,
+  Wand2,
 } from 'lucide-react';
-import { FlowNodeData, VariableType, WorkflowVariable } from '../../types';
+import {
+  FlowNodeData,
+  VariableType,
+  WorkflowVariable,
+  Flow,
+  SubflowVariableMapping,
+  SubflowMappingDirection,
+  NodeType,
+} from '../../types';
 import { resolveImageUrl } from '../../services/api';
-import { AGENT_AVAILABLE_SKILLS } from './skillRegistry';
+import { AGENT_AVAILABLE_SKILLS, SKILL_ITEMS } from './skillRegistry';
+import { detectSubflowCallCycle } from '../../utils/flowValidator';
 import {
   SYSTEM_VARIABLES,
   validateVariableNameFormat,
@@ -62,6 +80,12 @@ interface PropertyInspectorProps {
   variables?: WorkflowVariable[];
   onDeclareVariable?: (variable: WorkflowVariable) => void;
   externalInsertTrigger?: { varName: string; timestamp: number } | null;
+  flows?: Flow[];
+  activeFlowId?: string;
+  activeFlowName?: string;
+  allNodes?: any[];
+  onAssignNodeToGroup?: (nodeId: string, groupId: string | null) => void;
+  onAddNewSkillToGroup?: (groupId: string, type: NodeType, label: string, defaultConfig: Record<string, any>) => void;
 }
 
 export const PropertyInspector: React.FC<PropertyInspectorProps> = ({
@@ -74,6 +98,12 @@ export const PropertyInspector: React.FC<PropertyInspectorProps> = ({
   variables = [],
   onDeclareVariable,
   externalInsertTrigger,
+  flows = [],
+  activeFlowId,
+  activeFlowName,
+  allNodes = [],
+  onAssignNodeToGroup,
+  onAddNewSkillToGroup,
 }) => {
   const { t, language } = useI18n();
   const isEn = language === 'en';
@@ -90,10 +120,14 @@ export const PropertyInspector: React.FC<PropertyInspectorProps> = ({
   const cfg = { ...(nodeData.config || {}) };
   const isStart = nodeData.type === 'flow_start';
   const isEnd = nodeData.type === 'flow_end';
+  const isGroup = nodeData.type === 'flow_group';
+  const isSubflow = nodeData.type === 'flow_call';
   const isMarker = isStart || isEnd;
   const subtype = (nodeData.type || '').replace('general_', '');
   const isAi = nodeData.type === 'ai_ollama';
   const isAgent = nodeData.type === 'agent_basic';
+  const [groupAddSkillType, setGroupAddSkillType] = useState<string>('general_mouse_click');
+  const [assignExistingNodeId, setAssignExistingNodeId] = useState<string>('');
 
   // 현재 노드가 가진 텍스트형 속성 목록 정의 (클릭/드래그 변수 삽입 대상)
   const nodeTextFields = useMemo((): { key: string; label: string }[] => {
@@ -506,11 +540,17 @@ export const PropertyInspector: React.FC<PropertyInspectorProps> = ({
           {subtype === 'window_close' && <XCircle className="w-4 h-4 text-rose-400" />}
           {subtype === 'close_program' && <Power className="w-4 h-4 text-amber-400" />}
           {subtype === 'kill_process' && <Ban className="w-4 h-4 text-rose-500" />}
+          {isGroup && <FolderKanban className="w-4 h-4 text-teal-400" />}
+          {isSubflow && <GitBranchPlus className="w-4 h-4 text-cyan-400" />}
           <h2 className="text-sm font-semibold text-slate-200">
             {isStart
               ? (isEn ? 'Start Node Properties' : '시작 노드 속성')
               : isEnd
               ? (isEn ? 'End Node Properties' : '끝 노드 속성')
+              : isGroup
+              ? (isEn ? 'Group Node Properties' : '그룹 노드 속성')
+              : isSubflow
+              ? (isEn ? 'Sub-Workflow Call Properties' : '다른 워크플로우 호출 속성')
               : isAgent
               ? (isEn ? 'Agent Properties' : '기본 에이전트 속성')
               : t('inspector.title')}
@@ -3637,6 +3677,603 @@ export const PropertyInspector: React.FC<PropertyInspectorProps> = ({
               </div>
             </div>
           )}
+
+          {/* 7. 그룹 노드 (flow_group) */}
+          {isGroup && (
+            <div className="space-y-4">
+              {/* 안내 배지 */}
+              <div className="p-3 bg-teal-950/30 border border-teal-800/50 rounded-xl space-y-1.5">
+                <div className="flex items-center gap-1.5 text-xs font-semibold text-teal-300">
+                  <FolderKanban className="w-3.5 h-3.5 text-teal-400 shrink-0" />
+                  <span>{isEn ? 'Visual Group Container' : '시각적 그룹 컨테이너 노드'}</span>
+                </div>
+                <p className="text-[11px] text-slate-400 leading-relaxed">
+                  {isEn
+                    ? 'Groups related nodes visually on the canvas. Collapsing hides child nodes compactly. Purely visual—ignored by the backend engine and agent skillset.'
+                    : '연관성 있는 노드들을 시각적으로 묶어 관리하는 컨테이너입니다. 접기/펼치기로 하위 노드를 컴팩트하게 감출 수 있으며, 백엔드 실행 및 에이전트 스킬에는 아무런 영향을 주지 않습니다.'}
+                </p>
+              </div>
+
+              {/* 접기 / 펼치기 상태 제어 */}
+              <div>
+                <label className="text-[11px] text-slate-400 block mb-1.5 font-medium">
+                  {isEn ? 'Canvas Display State' : '캔버스 표시 상태 (접기 / 펼치기)'}
+                </label>
+                <div className="grid grid-cols-2 gap-1.5 p-1 bg-slate-950 rounded-lg border border-slate-800">
+                  <button
+                    type="button"
+                    onClick={() => handleConfigChange('collapsed', false)}
+                    className={`flex items-center justify-center gap-1.5 py-1.5 text-xs rounded-md font-medium transition-all ${
+                      !cfg.collapsed
+                        ? 'bg-teal-600 text-white shadow-sm'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    <ChevronDown className="w-3.5 h-3.5" />
+                    <span>{isEn ? 'Expanded (Show)' : '펼치기 (노드 표시)'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleConfigChange('collapsed', true)}
+                    className={`flex items-center justify-center gap-1.5 py-1.5 text-xs rounded-md font-medium transition-all ${
+                      cfg.collapsed
+                        ? 'bg-teal-600 text-white shadow-sm'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    <ChevronRight className="w-3.5 h-3.5" />
+                    <span>{isEn ? 'Collapsed (Compact)' : '접기 (컴팩트 숨김)'}</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* 그룹 테마 색상 */}
+              <div>
+                <label className="text-[11px] text-slate-400 block mb-1.5 font-medium">
+                  {isEn ? 'Group Color Theme' : '그룹 테두리 색상 테마'}
+                </label>
+                <div className="grid grid-cols-7 gap-1.5">
+                  {[
+                    { id: 'indigo', bg: 'bg-indigo-500' },
+                    { id: 'emerald', bg: 'bg-emerald-500' },
+                    { id: 'amber', bg: 'bg-amber-500' },
+                    { id: 'sky', bg: 'bg-sky-500' },
+                    { id: 'purple', bg: 'bg-purple-500' },
+                    { id: 'rose', bg: 'bg-rose-500' },
+                    { id: 'slate', bg: 'bg-slate-400' },
+                  ].map((c) => (
+                    <button
+                      key={c.id}
+                      type="button"
+                      onClick={() => handleConfigChange('color', c.id)}
+                      className={`h-6 rounded-lg flex items-center justify-center border transition-all ${
+                        (cfg.color || 'indigo') === c.id
+                          ? 'border-white ring-2 ring-teal-400 scale-105'
+                          : 'border-slate-700 opacity-70 hover:opacity-100'
+                      }`}
+                    >
+                      <span className={`w-3.5 h-3.5 rounded-full ${c.bg}`} />
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* 그룹 박스 크기 (가로 / 세로) */}
+              {!cfg.collapsed && (
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-[11px] text-slate-400 block mb-1">
+                      {isEn ? 'Width (px)' : '영역 가로 폭 (px)'}
+                    </label>
+                    <input
+                      type="number"
+                      min="320"
+                      max="2400"
+                      step="20"
+                      value={cfg.width ?? 560}
+                      onChange={(e) => handleConfigChange('width', Math.max(320, Number(e.target.value) || 560))}
+                      className="w-full px-2.5 py-1 text-xs bg-slate-950 border border-slate-700 rounded-lg text-slate-200 font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[11px] text-slate-400 block mb-1">
+                      {isEn ? 'Height (px)' : '영역 세로 높이 (px)'}
+                    </label>
+                    <input
+                      type="number"
+                      min="180"
+                      max="1600"
+                      step="20"
+                      value={cfg.height ?? 260}
+                      onChange={(e) => handleConfigChange('height', Math.max(180, Number(e.target.value) || 260))}
+                      className="w-full px-2.5 py-1 text-xs bg-slate-950 border border-slate-700 rounded-lg text-slate-200 font-mono"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* '+' 버튼 방식으로 그룹 내부에 새 스킬 노드 즉시 생성 추가 */}
+              <div className="border-t border-slate-800 pt-3 space-y-2">
+                <label className="text-[11px] font-semibold text-teal-300 flex items-center gap-1.5">
+                  <Plus className="w-3.5 h-3.5 text-teal-400" />
+                  <span>{isEn ? 'Add New Skill Node into Group' : '그룹 내부에 새 스킬 노드 추가 (+)'}</span>
+                </label>
+                <div className="flex items-center gap-1.5">
+                  <select
+                    value={groupAddSkillType}
+                    onChange={(e) => setGroupAddSkillType(e.target.value)}
+                    className="flex-1 px-2.5 py-1.5 text-xs bg-slate-950 border border-slate-700 rounded-lg text-slate-200 focus:outline-none focus:border-teal-500"
+                  >
+                    {SKILL_ITEMS.filter((it) => it.type !== 'flow_group').map((it) => (
+                      <option key={it.type} value={it.type}>
+                        {t(`skills.${it.type}.label`) || it.label}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const found = SKILL_ITEMS.find((it) => it.type === groupAddSkillType);
+                      if (found && onAddNewSkillToGroup && selectedNode) {
+                        const itemLabel = t(`skills.${found.type}.label`) || found.label;
+                        onAddNewSkillToGroup(selectedNode.id, found.type, itemLabel, found.defaultConfig);
+                      }
+                    }}
+                    className="px-2.5 py-1.5 rounded-lg bg-teal-600 hover:bg-teal-500 text-white text-xs font-semibold flex items-center gap-1 shrink-0 transition-colors cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>{isEn ? 'Add' : '추가'}</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* 캔버스의 기존 노드를 이 그룹으로 편입 (+) */}
+              {(() => {
+                const candidateNodes = allNodes.filter(
+                  (n) =>
+                    n.id !== selectedNode?.id &&
+                    n.type !== 'flow_group' &&
+                    n.type !== 'flow_start' &&
+                    n.type !== 'flow_end' &&
+                    (n.data as any)?.config?.group_id !== selectedNode?.id
+                );
+                if (candidateNodes.length === 0) return null;
+                return (
+                  <div className="space-y-1.5">
+                    <label className="text-[11px] text-slate-400 block">
+                      {isEn ? 'Include Existing Canvas Node' : '캔버스의 기존 노드를 그룹에 포함 (+)'}
+                    </label>
+                    <div className="flex items-center gap-1.5">
+                      <select
+                        value={assignExistingNodeId}
+                        onChange={(e) => setAssignExistingNodeId(e.target.value)}
+                        className="flex-1 px-2.5 py-1.5 text-xs bg-slate-950 border border-slate-700 rounded-lg text-slate-200 focus:outline-none focus:border-teal-500"
+                      >
+                        <option value="">
+                          {isEn ? '-- Select existing node --' : '-- 포함할 기존 노드 선택 --'}
+                        </option>
+                        {candidateNodes.map((cn) => (
+                          <option key={cn.id} value={cn.id}>
+                            {(cn.data as any)?.label || cn.id}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        disabled={!assignExistingNodeId}
+                        onClick={() => {
+                          if (assignExistingNodeId && onAssignNodeToGroup && selectedNode) {
+                            onAssignNodeToGroup(assignExistingNodeId, selectedNode.id);
+                            setAssignExistingNodeId('');
+                          }
+                        }}
+                        className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-teal-300 border border-teal-700/50 text-xs font-semibold flex items-center gap-1 shrink-0 transition-colors cursor-pointer"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>{isEn ? 'Include' : '포함'}</span>
+                      </button>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* 현재 그룹에 소속된 하위 노드 목록 및 개별 제외 버튼 */}
+              {(() => {
+                const groupChildren = allNodes.filter(
+                  (n) => n.type !== 'flow_group' && (n.data as any)?.config?.group_id === selectedNode?.id
+                );
+                return (
+                  <div className="border-t border-slate-800 pt-3 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-semibold text-slate-300">
+                        {isEn ? 'Grouped Child Nodes' : '그룹 내 포함된 하위 노드'}
+                      </span>
+                      <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-teal-300">
+                        {groupChildren.length}
+                      </span>
+                    </div>
+
+                    {groupChildren.length === 0 ? (
+                      <div className="p-3 rounded-lg bg-slate-950/60 border border-slate-800/80 text-[11px] text-slate-500 text-center">
+                        {isEn
+                          ? 'Drag nodes into the group box on the canvas or use the + button above.'
+                          : '캔버스에서 노드를 그룹 영역 안으로 드래그하거나 위 [+] 버튼으로 추가하세요.'}
+                      </div>
+                    ) : (
+                      <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1 custom-scrollbar">
+                        {groupChildren.map((child, idx) => (
+                          <div
+                            key={child.id}
+                            className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg bg-slate-950 border border-slate-800 text-xs"
+                          >
+                            <div className="flex items-center gap-1.5 min-w-0">
+                              <span className="text-[10px] font-mono text-slate-500">{idx + 1}.</span>
+                              <span className="text-slate-200 font-medium truncate">
+                                {(child.data as any)?.label || child.id}
+                              </span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (onAssignNodeToGroup) {
+                                  onAssignNodeToGroup(child.id, null);
+                                }
+                              }}
+                              className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 hover:bg-rose-950/70 text-slate-400 hover:text-rose-300 transition-colors shrink-0"
+                              title={isEn ? 'Remove from group (keep on canvas)' : '그룹에서 빼내기 (노드는 캔버스에 유지됨)'}
+                            >
+                              {isEn ? 'Ungroup' : '그룹 해제'}
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+            </div>
+          )}
+
+          {/* 8. 다른 워크플로우 호출 노드 (flow_call) */}
+          {isSubflow && (() => {
+            const targetFlowId = (cfg.target_flow_id || '').trim();
+            // 자기 자신은 선택 목록에서 제외하여 직접 재귀 호출 원천 차단
+            const selectableFlows = flows.filter((f) => f.id !== activeFlowId && !f.id.startsWith('temp_'));
+            const selectedSubflow = flows.find((f) => f.id === targetFlowId);
+            const subflowVars: WorkflowVariable[] = selectedSubflow?.graph_data?.variables || [];
+            const mappings: SubflowVariableMapping[] = Array.isArray(cfg.variable_mappings)
+              ? cfg.variable_mappings
+              : [];
+
+            // 정적 순환 호출(A -> B -> A) 여부 실시간 감지
+            const cycleChain = targetFlowId
+              ? detectSubflowCallCycle(activeFlowId, activeFlowName, targetFlowId, flows)
+              : null;
+
+            const handleSelectTargetFlow = (nextFlowId: string) => {
+              const found = flows.find((f) => f.id === nextFlowId);
+              handleMultiConfigChange({
+                target_flow_id: nextFlowId,
+                target_flow_name: found ? found.name : '',
+              });
+            };
+
+            const handleAddMapping = () => {
+              const defaultParentVar = variables.length > 0 ? variables[0].name : '';
+              const defaultSubVar = subflowVars.length > 0 ? subflowVars[0].name : '';
+              const nextList: SubflowVariableMapping[] = [
+                ...mappings,
+                {
+                  id: `mp_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+                  direction: 'in',
+                  parent_var: defaultParentVar,
+                  sub_var: defaultSubVar,
+                },
+              ];
+              handleConfigChange('variable_mappings', nextList);
+            };
+
+            // 상용 RPA 스타일: 선택한 서브 워크플로우의 선언 변수들을 기준으로 원클릭 자동 매핑 생성
+            const handleAutoPopulateMappings = () => {
+              if (!selectedSubflow || subflowVars.length === 0) return;
+              const existingSubVars = new Set(mappings.map((m) => m.sub_var));
+              const added: SubflowVariableMapping[] = [];
+
+              for (const sv of subflowVars) {
+                if (existingSubVars.has(sv.name)) continue;
+                const matchingParent = variables.find((pv) => pv.name === sv.name);
+                added.push({
+                  id: `mp_${Date.now()}_${sv.name}`,
+                  direction: 'inout',
+                  parent_var: matchingParent ? matchingParent.name : (variables[0]?.name || ''),
+                  sub_var: sv.name,
+                });
+              }
+              if (added.length > 0) {
+                handleConfigChange('variable_mappings', [...mappings, ...added]);
+              }
+            };
+
+            const handleUpdateMapping = (index: number, patch: Partial<SubflowVariableMapping>) => {
+              const nextList = mappings.map((item, idx) =>
+                idx === index ? { ...item, ...patch } : item
+              );
+              handleConfigChange('variable_mappings', nextList);
+            };
+
+            const handleRemoveMapping = (index: number) => {
+              const nextList = mappings.filter((_, idx) => idx !== index);
+              handleConfigChange('variable_mappings', nextList);
+            };
+
+            return (
+              <div className="space-y-4">
+                {/* 1) 호출할 대상 워크플로우 선택 */}
+                <div>
+                  <label className="text-[11px] font-semibold text-cyan-300 flex items-center gap-1.5 mb-1.5">
+                    <Workflow className="w-3.5 h-3.5 text-cyan-400" />
+                    <span>{isEn ? 'Target Workflow to Call' : '호출할 대상 워크플로우'}</span>
+                  </label>
+                  <select
+                    value={targetFlowId}
+                    onChange={(e) => handleSelectTargetFlow(e.target.value)}
+                    className="w-full px-2.5 py-2 text-xs bg-slate-950 border border-slate-700 rounded-lg text-slate-200 focus:outline-none focus:border-cyan-500"
+                  >
+                    <option value="">
+                      {isEn ? '-- Select a saved workflow --' : '-- 저장된 워크플로우 선택 --'}
+                    </option>
+                    {selectableFlows.map((f) => (
+                      <option key={f.id} value={f.id}>
+                        {f.name}
+                      </option>
+                    ))}
+                  </select>
+                  {selectableFlows.length === 0 && (
+                    <p className="text-[10px] text-amber-400 mt-1">
+                      {isEn
+                        ? 'No other saved workflows found. Save another workflow first.'
+                        : '호출 가능한 다른 저장된 워크플로우가 없습니다. 먼저 서브 워크플로우를 생성하고 저장해 주세요.'}
+                    </p>
+                  )}
+                </div>
+
+                {/* 순환 참조(무한 루프) 감지 경고 */}
+                {cycleChain && (
+                  <div className="p-2.5 rounded-xl bg-rose-950/60 border border-rose-700/80 text-[11px] text-rose-200 space-y-1">
+                    <div className="font-semibold text-rose-300 flex items-center gap-1.5">
+                      <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+                      <span>{isEn ? 'Circular Call Loop Detected!' : '순환 호출(무한 루프) 감지!'}</span>
+                    </div>
+                    <p className="text-[10px] text-rose-300/90 font-mono break-all">
+                      {cycleChain.join(' ➔ ')}
+                    </p>
+                    <p className="text-[10px] text-slate-300 leading-tight">
+                      {isEn
+                        ? 'The selected workflow directly or indirectly calls the current workflow, creating an infinite loop.'
+                        : '선택한 워크플로우가 직·간접적으로 현재 워크플로우를 다시 호출하여 무한 루프가 형성됩니다.'}
+                    </p>
+                  </div>
+                )}
+
+                {/* 선택된 서브 워크플로우 요약 정보 */}
+                {selectedSubflow && !cycleChain && (
+                  <div className="p-2.5 rounded-xl bg-slate-950/80 border border-slate-800 space-y-1 text-[11px]">
+                    <div className="flex items-center justify-between text-slate-300">
+                      <span className="font-semibold text-cyan-300 truncate">{selectedSubflow.name}</span>
+                      <span className="text-[10px] font-mono text-slate-400 shrink-0">
+                        {isEn
+                          ? `${subflowVars.length} var(s)`
+                          : `선언 변수 ${subflowVars.length}개`}
+                      </span>
+                    </div>
+                    {selectedSubflow.description && (
+                      <p className="text-[10px] text-slate-400 line-clamp-2">
+                        {selectedSubflow.description}
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {/* 2) 상용 RPA 스타일 입출력(In / Out / InOut) 변수 매핑 섹션 */}
+                <div className="border-t border-slate-800 pt-3 space-y-2.5">
+                  <div className="flex items-center justify-between gap-1">
+                    <div>
+                      <label className="text-[11px] font-semibold text-slate-200 flex items-center gap-1.5">
+                        <ArrowLeftRight className="w-3.5 h-3.5 text-cyan-400" />
+                        <span>{isEn ? 'Variable Parameter Mappings' : '입출력 변수 매핑 (In / Out / InOut)'}</span>
+                      </label>
+                      <p className="text-[10px] text-slate-400 mt-0.5">
+                        {isEn
+                          ? 'Variables are isolated by default. Map specific variables to pass in or receive back.'
+                          : '기본적으로 변수는 독립 격리됩니다. 값을 전달(In)하거나 종료 시 반환받을(Out) 변수만 매핑하세요.'}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* 매핑 추가 & 자동 매핑 버튼 바 */}
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={handleAddMapping}
+                      className="flex-1 py-1.5 px-2.5 rounded-lg bg-cyan-600/90 hover:bg-cyan-500 text-white text-xs font-semibold flex items-center justify-center gap-1 shadow-sm transition-colors cursor-pointer"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>{isEn ? 'Add Mapping' : '변수 매핑 추가'}</span>
+                    </button>
+
+                    {selectedSubflow && subflowVars.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={handleAutoPopulateMappings}
+                        className="py-1.5 px-2.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-cyan-300 border border-cyan-700/50 text-xs font-medium flex items-center gap-1 transition-colors cursor-pointer shrink-0"
+                        title={
+                          isEn
+                            ? 'Auto-create mappings from sub-workflow variables'
+                            : '서브 워크플로우의 변수 목록을 기준으로 매핑 자동 불러오기'
+                        }
+                      >
+                        <Wand2 className="w-3.5 h-3.5" />
+                        <span>{isEn ? 'Auto-Fill' : '자동 매핑'}</span>
+                      </button>
+                    )}
+                  </div>
+
+                  {/* 매핑 리스트 */}
+                  {mappings.length === 0 ? (
+                    <div className="p-3 rounded-xl bg-slate-950/60 border border-slate-800/80 text-center text-[11px] text-slate-500">
+                      {isEn
+                        ? 'No variable mappings configured. Sub-workflow will run with its own isolated default variables.'
+                        : '설정된 변수 매핑이 없습니다. 서브 워크플로우가 자체 초기값으로 완전히 격리되어 실행됩니다.'}
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {mappings.map((mp, idx) => {
+                        const dir: SubflowMappingDirection = mp.direction || 'in';
+                        return (
+                          <div
+                            key={mp.id || idx}
+                            className="p-2.5 rounded-xl bg-slate-950 border border-slate-800 space-y-2"
+                          >
+                            {/* 방향 선택 (In / Out / InOut) + 삭제 버튼 */}
+                            <div className="flex items-center justify-between gap-1">
+                              <div className="grid grid-cols-3 gap-1 bg-slate-900 p-0.5 rounded-lg border border-slate-800 flex-1">
+                                <button
+                                  type="button"
+                                  onClick={() => handleUpdateMapping(idx, { direction: 'in' })}
+                                  className={`flex items-center justify-center gap-1 py-1 rounded text-[10px] font-semibold transition-all ${
+                                    dir === 'in'
+                                      ? 'bg-blue-600 text-white shadow'
+                                      : 'text-slate-400 hover:text-slate-200'
+                                  }`}
+                                  title={isEn ? 'Pass value from Main to Sub-workflow' : '메인 워크플로우 값을 서브 워크플로우로 전달 (In)'}
+                                >
+                                  <ArrowRight className="w-3 h-3" />
+                                  <span>In (전달)</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleUpdateMapping(idx, { direction: 'out' })}
+                                  className={`flex items-center justify-center gap-1 py-1 rounded text-[10px] font-semibold transition-all ${
+                                    dir === 'out'
+                                      ? 'bg-emerald-600 text-white shadow'
+                                      : 'text-slate-400 hover:text-slate-200'
+                                  }`}
+                                  title={isEn ? 'Return value from Sub-workflow to Main on finish' : '서브 워크플로우 종료 시 결과값을 메인 변수로 반환 (Out)'}
+                                >
+                                  <ArrowLeft className="w-3 h-3" />
+                                  <span>Out (반환)</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleUpdateMapping(idx, { direction: 'inout' })}
+                                  className={`flex items-center justify-center gap-1 py-1 rounded text-[10px] font-semibold transition-all ${
+                                    dir === 'inout'
+                                      ? 'bg-purple-600 text-white shadow'
+                                      : 'text-slate-400 hover:text-slate-200'
+                                  }`}
+                                  title={isEn ? 'Pass in at start and receive updated value on finish' : '시작 시 전달하고 종료 시 변경된 값을 다시 반환받음 (InOut)'}
+                                >
+                                  <ArrowLeftRight className="w-3 h-3" />
+                                  <span>InOut</span>
+                                </button>
+                              </div>
+
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveMapping(idx)}
+                                className="p-1 rounded text-slate-500 hover:text-rose-400 hover:bg-rose-950/50 transition-colors shrink-0"
+                                title={t('common.delete')}
+                              >
+                                <X className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+
+                            {/* 현재(메인) 워크플로우 변수 선택 */}
+                            <div>
+                              <label className="text-[10px] text-slate-400 block mb-0.5">
+                                {isEn ? 'Main Workflow Variable' : '현재(메인) 워크플로우 변수'}
+                              </label>
+                              <select
+                                value={mp.parent_var || ''}
+                                onChange={(e) => handleUpdateMapping(idx, { parent_var: e.target.value })}
+                                className="w-full px-2 py-1 text-xs bg-slate-900 border border-slate-700 rounded text-emerald-300 font-mono focus:outline-none focus:border-cyan-500"
+                              >
+                                <option value="">
+                                  {isEn ? '-- Select main variable --' : '-- 메인 변수 선택 --'}
+                                </option>
+                                {variables.map((v) => (
+                                  <option key={v.name} value={v.name}>
+                                    {v.name} ({v.type})
+                                  </option>
+                                ))}
+                                {dir === 'in' &&
+                                  SYSTEM_VARIABLES.map((sv) => (
+                                    <option key={sv.name} value={sv.name}>
+                                      {sv.name} (system)
+                                    </option>
+                                  ))}
+                              </select>
+                            </div>
+
+                            {/* 서브 워크플로우 변수 선택 (또는 직접 입력) */}
+                            <div>
+                              <label className="text-[10px] text-slate-400 block mb-0.5">
+                                {isEn ? 'Sub-Workflow Variable' : '호출 대상(서브) 워크플로우 변수'}
+                              </label>
+                              {subflowVars.length > 0 ? (
+                                <select
+                                  value={mp.sub_var || ''}
+                                  onChange={(e) => handleUpdateMapping(idx, { sub_var: e.target.value })}
+                                  className="w-full px-2 py-1 text-xs bg-slate-900 border border-slate-700 rounded text-cyan-300 font-mono focus:outline-none focus:border-cyan-500"
+                                >
+                                  <option value="">
+                                    {isEn ? '-- Select sub-workflow variable --' : '-- 서브 워크플로우 변수 선택 --'}
+                                  </option>
+                                  {subflowVars.map((sv) => (
+                                    <option key={sv.name} value={sv.name}>
+                                      {sv.name} ({sv.type})
+                                    </option>
+                                  ))}
+                                </select>
+                              ) : (
+                                <input
+                                  type="text"
+                                  value={mp.sub_var || ''}
+                                  onChange={(e) => handleUpdateMapping(idx, { sub_var: e.target.value })}
+                                  placeholder={isEn ? 'Sub-workflow variable name' : '서브 워크플로우 변수명 입력'}
+                                  className="w-full px-2 py-1 text-xs bg-slate-900 border border-slate-700 rounded text-cyan-300 font-mono focus:outline-none focus:border-cyan-500"
+                                />
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {/* 3) 무한 루프 및 과다 호출 안전 보호 정책 안내 */}
+                <div className="p-2.5 rounded-xl bg-slate-950/90 border border-slate-800/90 text-[10px] text-slate-400 space-y-1">
+                  <div className="font-semibold text-slate-300 flex items-center gap-1">
+                    <ShieldCheck className="w-3.5 h-3.5 text-teal-400 shrink-0" />
+                    <span>{isEn ? 'Sub-Workflow Safety Guardrails' : '서브 워크플로우 3중 안전 가드레일 작동 중'}</span>
+                  </div>
+                  <ul className="list-disc list-inside space-y-0.5 text-slate-400/90">
+                    <li>
+                      {isEn
+                        ? 'Call-stack cycle detection blocks direct & indirect infinite loops.'
+                        : '콜 스택(Call Stack) 추적으로 직·간접 무한 루프 즉시 차단'}
+                    </li>
+                    <li>
+                      {isEn
+                        ? 'Max nesting depth (5 levels) & total step limit (500 steps) enforced.'
+                        : '최대 중첩 호출 깊이(5단계) 및 세션당 누적 실행(500스텝) 제한'}
+                    </li>
+                  </ul>
+                </div>
+              </div>
+            );
+          })()}
         </div>
       </div>
 

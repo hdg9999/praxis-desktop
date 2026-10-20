@@ -688,7 +688,7 @@ export const AgentManagerWindow: React.FC = () => {
                   {filteredFlows.map((flow) => {
                     const rawNodes = flow.graph_data?.nodes || [];
                     const actionNodeCount = rawNodes.filter(
-                      (n: any) => n.type !== 'flow_start' && n.type !== 'flow_end'
+                      (n: any) => n.type !== 'flow_start' && n.type !== 'flow_end' && n.type !== 'flow_group'
                     ).length;
                     const varCount = (flow.graph_data?.variables || []).length;
                     const delaySec = flow.graph_data?.settings?.execution_delay ?? 0.3;
