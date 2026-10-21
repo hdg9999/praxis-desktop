@@ -23,6 +23,13 @@ export type NodeType =
   | 'general_launch_program'
   | 'general_close_program'
   | 'general_kill_process'
+  | 'browser_navigate'
+  | 'browser_click'
+  | 'browser_fill'
+  | 'browser_extract'
+  | 'browser_action'
+  | 'browser_get_info'
+  | 'browser_evaluate'
   | 'ai_ollama'
   | 'agent_basic';
 
@@ -56,7 +63,7 @@ export interface AgentNodeConfig {
   system_prompt?: string;
   include_screen_capture?: boolean;
   skill_mode?: 'preset' | 'custom';
-  preset_name?: 'basic_interaction' | 'all';
+  preset_name?: 'basic_interaction' | 'web_playwright' | 'all';
   custom_skills?: string[];
   max_steps?: number;
   temperature?: number;
@@ -154,6 +161,26 @@ export interface UIObjectData {
   auto_focus_scroll?: boolean;
   process_id?: number;
   executable_path?: string;
+}
+
+export interface WebElementData {
+  tag: string;
+  input_type?: string;
+  role?: string;
+  id?: string;
+  name?: string;
+  text?: string;
+  placeholder?: string;
+  aria_label?: string;
+  display_name: string;
+  css_selector: string;
+  xpath: string;
+  recommended_type: 'css' | 'xpath' | 'text' | 'placeholder' | 'auto';
+  recommended_selector: string;
+  in_iframe?: boolean;
+  frame_url?: string;
+  page_url?: string;
+  page_title?: string;
 }
 
 declare global {

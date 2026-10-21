@@ -22,6 +22,13 @@ import {
   XCircle,
   Power,
   Ban,
+  Globe,
+  MousePointerClick,
+  FormInput,
+  FileSearch,
+  Compass,
+  Info,
+  Code2,
 } from 'lucide-react';
 import { FlowNodeData } from '../../types';
 import { useI18n } from '../../i18n';
@@ -31,7 +38,8 @@ const GeneralNode: React.FC<NodeProps> = ({ id, data, type, selected }) => {
   const { t } = useI18n();
   const nodeData = (data || {}) as unknown as FlowNodeData;
   const resolvedType = nodeData.type || (type as string) || 'general_delay';
-  const subtype = String(resolvedType).replace('general_', '');
+  const isBrowserNode = String(resolvedType).startsWith('browser_');
+  const subtype = isBrowserNode ? String(resolvedType) : String(resolvedType).replace('general_', '');
 
   const handleDelete = (evt: React.MouseEvent) => {
     evt.stopPropagation();
@@ -64,6 +72,13 @@ const GeneralNode: React.FC<NodeProps> = ({ id, data, type, selected }) => {
       case 'launch_program': return <Rocket className="w-4 h-4 text-orange-400" />;
       case 'close_program': return <Power className="w-4 h-4 text-amber-400" />;
       case 'kill_process': return <Ban className="w-4 h-4 text-rose-500" />;
+      case 'browser_navigate': return <Globe className="w-4 h-4 text-cyan-400" />;
+      case 'browser_click': return <MousePointerClick className="w-4 h-4 text-sky-400" />;
+      case 'browser_fill': return <FormInput className="w-4 h-4 text-emerald-400" />;
+      case 'browser_extract': return <FileSearch className="w-4 h-4 text-teal-400" />;
+      case 'browser_action': return <Compass className="w-4 h-4 text-indigo-400" />;
+      case 'browser_get_info': return <Info className="w-4 h-4 text-blue-400" />;
+      case 'browser_evaluate': return <Code2 className="w-4 h-4 text-amber-400" />;
       default: return <MousePointer className="w-4 h-4 text-slate-400" />;
     }
   };
@@ -204,6 +219,38 @@ const GeneralNode: React.FC<NodeProps> = ({ id, data, type, selected }) => {
     if (subtype === 'kill_process') {
       return `☠️ ${t('skills.general_kill_process.label')}: "${cfg.process_name || t('common.none')}"`;
     }
+    if (subtype === 'browser_navigate') {
+      const modeTag = cfg.run_mode === 'headless' ? '👻Headless' : cfg.run_mode === 'minimized' ? '🔽최소화' : '🌐창';
+      return `[${modeTag}] ${(cfg.url || '').slice(0, 24)}`;
+    }
+    if (subtype === 'browser_click') {
+      const targetName = cfg.web_element_data?.display_name || cfg.selector || '';
+      const iframeTag = cfg.web_element_data?.in_iframe ? '[iframe] ' : '';
+      return `🎯 ${iframeTag}[${cfg.selector_type || 'auto'}] "${String(targetName).slice(0, 18)}"`;
+    }
+    if (subtype === 'browser_fill') {
+      const enterBadge = cfg.press_enter ? ' ↵' : '';
+      const targetName = cfg.web_element_data?.display_name || cfg.selector || '';
+      return `⌨️ "${String(targetName).slice(0, 10)}" ➔ "${(cfg.text || '').slice(0, 12)}"${enterBadge}`;
+    }
+    if (subtype === 'browser_extract') {
+      const scopeTag =
+        cfg.extract_target === 'element'
+          ? cfg.web_element_data?.display_name
+            ? `🎯${String(cfg.web_element_data.display_name).slice(0, 8)}`
+            : '요소'
+          : '전체본문';
+      return `📑 [${scopeTag}·${cfg.extract_format || 'md'}] → {{${cfg.output_variable || 'web_content'}}}`;
+    }
+    if (subtype === 'browser_action') {
+      return `🧭 [${cfg.action_type || 'switch_tab'}] ${(cfg.target_value || '').slice(0, 16)}`;
+    }
+    if (subtype === 'browser_get_info') {
+      return `ℹ️ [${cfg.info_type || 'url'}] → {{${cfg.output_variable || 'web_info'}}}`;
+    }
+    if (subtype === 'browser_evaluate') {
+      return `⚡ JS → {{${cfg.output_variable || 'js_result'}}}`;
+    }
     return subtype;
   };
 
@@ -239,7 +286,14 @@ const GeneralNode: React.FC<NodeProps> = ({ id, data, type, selected }) => {
         </div>
         <div className="flex-1 min-w-0">
           <div className="text-xs font-semibold text-slate-200 truncate">{nodeData.label}</div>
-          <div className="text-[10px] text-slate-400 uppercase tracking-wider">{subtype}</div>
+          <div className="text-[10px] text-slate-400 uppercase tracking-wider flex items-center gap-1">
+            <span>{subtype}</span>
+            {isBrowserNode && (
+              <span className="px-1 py-0.2 rounded bg-cyan-950/80 text-cyan-300 border border-cyan-800/60 text-[9px] font-semibold normal-case">
+                Playwright
+              </span>
+            )}
+          </div>
         </div>
       </div>
 

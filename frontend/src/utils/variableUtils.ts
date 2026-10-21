@@ -274,6 +274,34 @@ export function getNodeOutputVariableRequirement(
       defaultVarName: 'dialog_result',
     };
   }
+  if (nodeType === 'browser_extract') {
+    return {
+      usesOutputVar: true,
+      expectedTypes: ['string', 'json'],
+      defaultVarName: 'web_content',
+    };
+  }
+  if (nodeType === 'browser_get_info') {
+    return {
+      usesOutputVar: true,
+      expectedTypes: ['string', 'json'],
+      defaultVarName: 'web_info',
+    };
+  }
+  if (nodeType === 'browser_evaluate') {
+    return {
+      usesOutputVar: true,
+      expectedTypes: ['string', 'number', 'boolean', 'json'],
+      defaultVarName: 'js_result',
+    };
+  }
+  if (nodeType === 'browser_action' && config?.action_type === 'wait_for_download') {
+    return {
+      usesOutputVar: true,
+      expectedTypes: ['string', 'json'],
+      defaultVarName: 'downloaded_file_path',
+    };
+  }
   return {
     usesOutputVar: false,
     expectedTypes: [],
@@ -330,6 +358,12 @@ export function analyzeNodeVariableUsage(node: Node): {
     'content',
     'title',
     'message',
+    'url',
+    'selector',
+    'attribute_name',
+    'target_value',
+    'option_value',
+    'script',
   ];
 
   const referencedSet = new Set<string>();

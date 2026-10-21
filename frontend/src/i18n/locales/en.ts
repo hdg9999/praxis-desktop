@@ -99,6 +99,10 @@ export const en: TranslationType = {
       label: 'Window Control',
       description: 'Activate (front), maximize, minimize, close, and program control',
     },
+    browser: {
+      label: 'Web Browser (Playwright)',
+      description: 'Legacy web (iframe)/SPA and cursor-free background web automation',
+    },
     system: {
       label: 'System / Utility',
       description: 'Delay, clipboard, and screenshot control',
@@ -218,6 +222,34 @@ export const en: TranslationType = {
     flow_call: {
       label: 'Call Sub-Workflow',
       desc: 'Invoke another saved workflow with isolated In/Out variable mappings',
+    },
+    browser_navigate: {
+      label: 'Open Web / Navigate URL',
+      desc: 'Navigate to URL via Playwright (Normal/Minimized/Headless) with persistent login',
+    },
+    browser_click: {
+      label: 'Web Element Click (Background)',
+      desc: 'Click web button/link/iframe element directly via DOM without moving mouse cursor',
+    },
+    browser_fill: {
+      label: 'Web Text Fill (Background)',
+      desc: 'Fill text into web input field without stealing focus or clipboard + optional Enter',
+    },
+    browser_extract: {
+      label: 'Extract Web Content / Table',
+      desc: 'Extract full page markdown, table, or element text/attribute into a variable',
+    },
+    browser_action: {
+      label: 'Web Tab / Dropdown / Download',
+      desc: 'Switch tabs, go back/reload, select dropdown (<select>), or wait for file download',
+    },
+    browser_get_info: {
+      label: 'Get Current Web Info',
+      desc: 'Read current tab URL, page Title, or open tabs list into a variable',
+    },
+    browser_evaluate: {
+      label: 'Execute Web JavaScript (JS)',
+      desc: 'Run custom JS code inside the page for legacy web/custom UI and store return value',
     },
   },
 

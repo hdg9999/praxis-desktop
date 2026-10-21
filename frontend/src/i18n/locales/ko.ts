@@ -97,6 +97,10 @@ export const ko = {
       label: '윈도우 / 창 제어',
       description: '창 활성화(맨 앞으로), 최대화, 최소화, 닫기, 프로그램 제어',
     },
+    browser: {
+      label: '웹 브라우저 (Playwright)',
+      description: '레거시 웹(iframe)/SPA 및 마우스 비점유 백그라운드 웹 자동화',
+    },
     system: {
       label: '시스템 / 유틸리티',
       description: '대기(딜레이), 클립보드 및 스크린샷 제어',
@@ -216,6 +220,34 @@ export const ko = {
     flow_call: {
       label: '다른 워크플로우 호출',
       desc: '기존에 저장된 서브 워크플로우를 호출하고 입출력 변수를 매핑하여 실행',
+    },
+    browser_navigate: {
+      label: '웹 브라우저 열기 / 이동',
+      desc: 'Playwright 브라우저(일반/최소화/Headless 백그라운드)로 URL 이동 및 로그인 유지',
+    },
+    browser_click: {
+      label: '웹 요소 클릭 (백그라운드)',
+      desc: '마우스 커서 이동 없이 웹 버튼/링크/iframe 내부 요소를 DOM으로 직접 클릭',
+    },
+    browser_fill: {
+      label: '웹 텍스트 입력 (백그라운드)',
+      desc: '클립보드/포커스 간섭 없이 웹 입력창에 텍스트 즉시 주입 및 Enter 전송',
+    },
+    browser_extract: {
+      label: '웹 데이터 / 본문 추출',
+      desc: '웹페이지 전체 본문, 표(Table), 또는 특정 요소 텍스트/속성을 변수로 추출',
+    },
+    browser_action: {
+      label: '웹 탭 / 드롭다운 / 다운로드 제어',
+      desc: '새 탭 전환, 뒤로/새로고침, 드롭다운(<select>) 선택, 파일 다운로드 완료 대기',
+    },
+    browser_get_info: {
+      label: '현재 웹페이지 정보 읽기',
+      desc: '현재 활성 탭의 URL 주소, 페이지 제목(Title), 또는 열린 탭 목록을 변수에 저장',
+    },
+    browser_evaluate: {
+      label: '웹 자바스크립트(JS) 실행',
+      desc: '비표준 레거시 웹/독자 UI 제어를 위해 브라우저 내부 JS 코드 실행 및 반환값 저장',
     },
   },
 

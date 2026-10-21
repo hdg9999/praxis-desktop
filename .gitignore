@@ -86,6 +86,9 @@ backend/storage/screenshots/*
 !backend/storage/screenshots/.gitkeep
 backend/storage/objects/*
 !backend/storage/objects/.gitkeep
+backend/storage/browser_profile/
+backend/storage/downloads/*
+!backend/storage/downloads/.gitkeep
 
 # 로그
 *.log

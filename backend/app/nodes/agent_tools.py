@@ -466,6 +466,132 @@ AGENT_TOOLS: Dict[str, AgentToolDefinition] = {
             },
             "required": ["message"]
         }
+    ),
+    "web_navigate": AgentToolDefinition(
+        name="web_navigate",
+        display_name="웹 브라우저 열기 / URL 이동",
+        description="Playwright 브라우저를 통해 지정한 웹 주소(URL)로 이동합니다. 마우스 커서를 움직이지 않고 동작하며, 이동 직후 페이지 제목과 주요 인터랙티브 요소(ref 번호 포함) 스냅샷을 반환합니다.",
+        category="browser",
+        parameters={
+            "type": "object",
+            "properties": {
+                "url": {
+                    "type": "string",
+                    "description": "이동할 웹페이지 URL 주소 (예: 'https://www.naver.com')"
+                },
+                "headless": {
+                    "type": "boolean",
+                    "description": "창을 화면에 띄우지 않고 완전 백그라운드(Headless)로 실행할지 여부 (기본값: false)"
+                },
+                "new_tab": {
+                    "type": "boolean",
+                    "description": "새 탭에서 열지 여부 (기본값: false)"
+                }
+            },
+            "required": ["url"]
+        }
+    ),
+    "web_get_snapshot": AgentToolDefinition(
+        name="web_get_snapshot",
+        display_name="웹 인터랙티브 요소 스캔 (DOM/iframe)",
+        description="현재 열린 웹페이지(중첩 iframe 내부 포함)에서 클릭 가능한 버튼, 링크, 입력창 목록과 고유 참조 번호(ref: 'e1', 'e2'...)를 스캔합니다. 픽셀 좌표 없이 web_click이나 web_fill에 ref 번호나 텍스트를 바로 넣어 조작할 수 있습니다.",
+        category="browser",
+        parameters={
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "특정 키워드가 포함된 웹 요소만 필터링할 때 사용하는 검색어 (선택 사항)"
+                }
+            },
+            "required": []
+        }
+    ),
+    "web_click": AgentToolDefinition(
+        name="web_click",
+        display_name="웹 요소 클릭 (Playwright)",
+        description="마우스 커서를 이동하지 않고 웹페이지(또는 iframe 내부)의 버튼, 링크, 탭 등을 직접 클릭합니다. target에 스냅샷의 ref 번호(예: 'e1'), 화면에 보이는 텍스트(예: '로그인'), 또는 CSS/XPath 선택자를 지정하세요.",
+        category="browser",
+        parameters={
+            "type": "object",
+            "properties": {
+                "target": {
+                    "type": "string",
+                    "description": "클릭할 요소의 ref 번호(예: 'e3'), 텍스트(예: '검색'), 또는 CSS 선택자(예: '#login-btn')"
+                },
+                "force": {
+                    "type": "boolean",
+                    "description": "가려진 레이어를 무시하고 강제 클릭할지 여부 (기본값: false)"
+                }
+            },
+            "required": ["target"]
+        }
+    ),
+    "web_fill": AgentToolDefinition(
+        name="web_fill",
+        display_name="웹 텍스트 입력 (Playwright)",
+        description="클립보드나 마우스 포커스를 뺏지 않고 웹페이지 입력창(input, textarea)에 텍스트를 직접 입력합니다. press_enter를 true로 주면 입력 후 자동으로 Enter 키까지 전송합니다.",
+        category="browser",
+        parameters={
+            "type": "object",
+            "properties": {
+                "target": {
+                    "type": "string",
+                    "description": "입력할 대상 요소의 ref 번호(예: 'e2'), placeholder/라벨 텍스트(예: '검색어 입력'), 또는 CSS 선택자"
+                },
+                "text": {
+                    "type": "string",
+                    "description": "입력할 텍스트 값"
+                },
+                "press_enter": {
+                    "type": "boolean",
+                    "description": "입력 후 자동으로 Enter 키를 눌러 검색/제출할지 여부 (기본값: false)"
+                }
+            },
+            "required": ["target", "text"]
+        }
+    ),
+    "web_read_page": AgentToolDefinition(
+        name="web_read_page",
+        display_name="웹페이지 본문/표 텍스트 읽기",
+        description="현재 열린 웹페이지(및 iframe)의 본문 텍스트와 표(table) 데이터를 깔끔한 마크다운 형식으로 추출하여 읽어옵니다. 뉴스 기사 읽기, 검색 결과 확인, 데이터 수집 시 사용하세요.",
+        category="browser",
+        parameters={
+            "type": "object",
+            "properties": {
+                "selector": {
+                    "type": "string",
+                    "description": "특정 영역만 읽고 싶을 때 지정하는 CSS 선택자 (생략 시 전체 본문 추출)"
+                },
+                "max_length": {
+                    "type": "integer",
+                    "description": "읽어올 최대 글자 수 (기본값: 5000)",
+                    "default": 5000
+                }
+            },
+            "required": []
+        }
+    ),
+    "web_control": AgentToolDefinition(
+        name="web_control",
+        display_name="웹 브라우저 제어 (탭/탐색/JS)",
+        description="웹 브라우저의 뒤로 가기(back), 앞으로 가기(forward), 새로고침(reload), 탭 전환(switch_tab), 현재 탭 닫기(close_tab), 또는 레거시 웹 제어를 위한 자바스크립트 실행(eval_js)을 수행합니다.",
+        category="browser",
+        parameters={
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["back", "forward", "reload", "switch_tab", "close_tab", "eval_js"],
+                    "description": "수행할 브라우저 제어 동작"
+                },
+                "value": {
+                    "type": "string",
+                    "description": "switch_tab일 때는 탭 제목 키워드(또는 'latest'/'next'), eval_js일 때는 실행할 JS 코드"
+                }
+            },
+            "required": ["action"]
+        }
     )
 }
 
@@ -484,6 +610,15 @@ PRESET_SKILLS = {
         "window_activate",
         "window_maximize",
         "window_close",
+        "take_screenshot"
+    ],
+    "web_playwright": [
+        "web_navigate",
+        "web_get_snapshot",
+        "web_click",
+        "web_fill",
+        "web_read_page",
+        "web_control",
         "take_screenshot"
     ],
     "all": list(AGENT_TOOLS.keys())
@@ -915,6 +1050,119 @@ async def execute_agent_tool(
                     return "[성공] 사용자가 대화상자에서 '계속'을 선택했습니다."
                 return "[실패] 사용자가 대화상자에서 '중지'를 선택하여 작업을 중단했습니다."
             return f"[성공] 사용자 대화상자('{title}') 확인 완료"
+
+        # 22. 웹 브라우저 열기 / URL 이동 (Playwright)
+        elif name == "web_navigate":
+            from app.services.playwright_service import playwright_service
+            url = str(args.get("url", "")).strip()
+            if not url:
+                return "[실패] 이동할 url 인자가 비어 있습니다."
+            headless = bool(args.get("headless", False))
+            new_tab = bool(args.get("new_tab", False))
+            run_mode = "headless" if headless else "headed"
+
+            nav_res = await playwright_service.navigate(
+                url=url,
+                run_mode=run_mode,
+                new_tab=new_tab,
+            )
+            snap = await playwright_service.get_interactive_snapshot(limit=35)
+            lines = [
+                f"[성공] 웹페이지 이동 완료: '{nav_res.get('title')}' ({nav_res.get('url')})",
+                f"주요 클릭/입력 가능 웹 요소 ({len(snap.get('elements', []))}개 표시):",
+            ]
+            for el in snap.get("elements", [])[:25]:
+                iframe_tag = " [iframe]" if el.get("in_iframe") else ""
+                lines.append(f"  [{el['ref']}] <{el['type']}>{iframe_tag} \"{el['label']}\"")
+            return "\n".join(lines)
+
+        # 23. 웹 인터랙티브 요소 스캔 (DOM / iframe)
+        elif name == "web_get_snapshot":
+            from app.services.playwright_service import playwright_service
+            query = str(args.get("query") or "").strip() or None
+            snap = await playwright_service.get_interactive_snapshot(query=query, limit=60)
+            elements = snap.get("elements", [])
+            if not elements:
+                return f"[스캔 완료] '{snap.get('title')}' ({snap.get('url')}) - 조건에 맞는 인터랙티브 요소가 없습니다."
+            lines = [
+                f"[웹 스냅샷] '{snap.get('title')}' ({snap.get('url')}) - 총 {len(elements)}개 요소:",
+            ]
+            for el in elements:
+                iframe_tag = " [iframe]" if el.get("in_iframe") else ""
+                val_info = f" (현재값: '{el['value']}')" if el.get("value") else ""
+                lines.append(f"  [{el['ref']}] <{el['type']}>{iframe_tag} \"{el['label']}\"{val_info} -> selector: {el['selector_hint']}")
+            return "\n".join(lines)
+
+        # 24. 웹 요소 클릭 (Playwright)
+        elif name == "web_click":
+            from app.services.playwright_service import playwright_service
+            target = str(args.get("target", "")).strip()
+            if not target:
+                return "[실패] 클릭할 target 인자가 비어 있습니다."
+            force = bool(args.get("force", False))
+            res = await playwright_service.click_element(
+                selector_type="auto",
+                selector=target,
+                iframe_auto_search=True,
+                force_click=force,
+            )
+            return f"[성공] 웹 요소 '{target}' 클릭 완료 (현재 페이지: '{res.get('current_title')}' - {res.get('current_url')})"
+
+        # 25. 웹 텍스트 입력 (Playwright)
+        elif name == "web_fill":
+            from app.services.playwright_service import playwright_service
+            target = str(args.get("target", "")).strip()
+            text = str(args.get("text", ""))
+            press_enter = bool(args.get("press_enter", False))
+            if not target:
+                return "[실패] 입력할 대상(target) 인자가 비어 있습니다."
+            res = await playwright_service.fill_element(
+                selector_type="auto",
+                selector=target,
+                text=text,
+                input_method="fill",
+                press_enter=press_enter,
+                iframe_auto_search=True,
+            )
+            enter_msg = " 및 Enter 전송" if press_enter else ""
+            return f"[성공] 웹 입력창 '{target}'에 '{text}' 입력{enter_msg} 완료 (URL: {res.get('current_url')})"
+
+        # 26. 웹페이지 본문/표 텍스트 읽기 (Playwright)
+        elif name == "web_read_page":
+            from app.services.playwright_service import playwright_service
+            selector = str(args.get("selector") or "").strip()
+            max_length = int(args.get("max_length", 5000) or 5000)
+            target_mode = "element" if selector else "full_page"
+            content = await playwright_service.extract_content(
+                extract_target=target_mode,
+                selector_type="auto",
+                selector=selector,
+                extract_format="markdown",
+                iframe_auto_search=True,
+                max_length=max_length,
+            )
+            if context and hasattr(context, "variables") and isinstance(context.variables, dict):
+                context.variables["last_output"] = content
+            return f"[성공] 웹페이지 본문 읽기 완료 ({len(content)}자):\n{content}"
+
+        # 27. 웹 브라우저 제어 (탭/탐색/JS)
+        elif name == "web_control":
+            from app.services.playwright_service import playwright_service
+            action = str(args.get("action", "reload")).strip().lower()
+            value = str(args.get("value") or "").strip()
+            if action == "eval_js":
+                js_res = await playwright_service.evaluate_js(value)
+                return f"[성공] 웹 JS 실행 완료: {js_res}"
+            action_map = {
+                "back": "go_back",
+                "forward": "go_forward",
+                "reload": "reload",
+                "switch_tab": "switch_tab",
+                "close_tab": "close_tab",
+            }
+            mapped = action_map.get(action, action)
+            res = await playwright_service.perform_action(action_type=mapped, target_value=value)
+            return f"[성공] 웹 브라우저 제어({action}) 완료: {res}"
 
         else:
             return f"[오류] 미구현된 스킬입니다: '{name}'"

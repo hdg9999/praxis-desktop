@@ -19,6 +19,7 @@ from app.nodes.base import (
     coerce_variable_value,
 )
 from app.nodes.general import GeneralNode
+from app.nodes.browser import BrowserNode
 from app.nodes.ai import AINode
 from app.nodes.agent import AgentNode
 
@@ -281,6 +282,9 @@ class FlowEngine:
         elif node_type.startswith("general_"):
             subtype = node_type.replace("general_", "")
             return GeneralNode(id=node_id, name=label, subtype=subtype, config=config)
+        elif node_type.startswith("browser_"):
+            subtype = node_type.replace("browser_", "")
+            return BrowserNode(id=node_id, name=label, subtype=subtype, config=config)
         elif node_type in ["agent_basic", "agent"]:
             return AgentNode(id=node_id, name=label, config=config)
         elif node_type.startswith("ai_") or node_type == "ai_ollama":
@@ -311,6 +315,12 @@ class FlowEngine:
             "message",
             "prompt",
             "system_prompt",
+            "url",
+            "selector",
+            "attribute_name",
+            "target_value",
+            "option_value",
+            "script",
         ]
 
         for node in ordered_nodes:
@@ -367,7 +377,18 @@ class FlowEngine:
             requires_output = False
             expected_types = ("string", "number", "boolean", "json")
 
-            if node_type in ("general_clipboard_read", "general_file_read", "ai_ollama", "agent_basic", "agent"):
+            if node_type in (
+                "general_clipboard_read",
+                "general_file_read",
+                "browser_extract",
+                "browser_get_info",
+                "browser_evaluate",
+                "ai_ollama",
+                "agent_basic",
+                "agent",
+            ):
+                requires_output = True
+            elif node_type == "browser_action" and str(config.get("action_type", "")).lower() == "wait_for_download":
                 requires_output = True
             elif node_type == "general_message_box" and str(config.get("button_type", "ok")).lower() == "yes_no":
                 requires_output = True

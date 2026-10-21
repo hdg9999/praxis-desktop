@@ -78,6 +78,13 @@ export const FlowCanvas: React.FC<FlowCanvasProps> = ({
     general_launch_program: GeneralNode,
     general_close_program: GeneralNode,
     general_kill_process: GeneralNode,
+    browser_navigate: GeneralNode,
+    browser_click: GeneralNode,
+    browser_fill: GeneralNode,
+    browser_extract: GeneralNode,
+    browser_action: GeneralNode,
+    browser_get_info: GeneralNode,
+    browser_evaluate: GeneralNode,
     ai_ollama: AINode,
     agent_basic: AgentNode,
   }), []);

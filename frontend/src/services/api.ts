@@ -1,4 +1,4 @@
-import { Flow, ExecutionSession, ExecutionMessage, AppSettings, UIObjectData } from '../types';
+import { Flow, ExecutionSession, ExecutionMessage, AppSettings, UIObjectData, WebElementData } from '../types';
 
 const isFileProtocol = typeof window !== 'undefined' && window.location.protocol === 'file:';
 export const BACKEND_URL = 'http://127.0.0.1:8000';
@@ -245,3 +245,52 @@ export async function captureUIAElement(data: {
   if (!res.ok) throw new Error('UIA 오브젝트 캡처 실패');
   return res.json();
 }
+
+export async function startWebPicker(params?: {
+  url?: string;
+  browser_channel?: string;
+  use_persistent_profile?: boolean;
+}): Promise<{
+  active: boolean;
+  status: 'picking' | 'picked' | 'cancelled' | 'idle' | 'error';
+  url?: string;
+  title?: string;
+}> {
+  const res = await fetch(`${API_BASE}/picker/web-start`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params || {}),
+  });
+  if (!res.ok) {
+    let errMsg = '웹 요소 선택기 시작 실패';
+    try {
+      const errBody = await res.json();
+      if (errBody?.detail) errMsg = errBody.detail;
+    } catch {
+      // ignore
+    }
+    throw new Error(errMsg);
+  }
+  return res.json();
+}
+
+export async function getWebPickerStatus(): Promise<{
+  active: boolean;
+  status: 'picking' | 'picked' | 'cancelled' | 'idle' | 'error';
+  element?: WebElementData | null;
+  error?: string | null;
+}> {
+  const res = await fetch(`${API_BASE}/picker/web-status`);
+  if (!res.ok) throw new Error('웹 요소 선택기 상태 조회 실패');
+  return res.json();
+}
+
+export async function cancelWebPicker(): Promise<{
+  active: boolean;
+  status: string;
+}> {
+  const res = await fetch(`${API_BASE}/picker/web-cancel`, { method: 'POST' });
+  if (!res.ok) throw new Error('웹 요소 선택기 취소 실패');
+  return res.json();
+}
+

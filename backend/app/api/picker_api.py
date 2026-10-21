@@ -285,3 +285,40 @@ def reselect_picker_worker():
     """피커 워커 다시 선택 모드로 전환"""
     uia_picker_worker.reselect()
     return {"status": "reselected"}
+
+
+# ==================== Playwright 비주얼 웹 요소 선택기 (Web Picker) API ====================
+
+from app.services.playwright_service import playwright_service
+
+class WebPickerStartRequest(BaseModel):
+    url: Optional[str] = None
+    browser_channel: Optional[str] = "chrome"
+    use_persistent_profile: bool = True
+
+@router.post("/web-start")
+async def start_web_element_picker(req: WebPickerStartRequest):
+    """
+    Playwright 브라우저에서 시각적 웹 요소 선택기(Web Picker)를 시작합니다.
+    열려 있는 브라우저가 없거나 빈 탭인 경우 전달된 URL로 자동 이동한 뒤 선택 오버레이를 주입합니다.
+    """
+    try:
+        res = await playwright_service.start_web_picker(
+            url=req.url,
+            browser_channel=req.browser_channel or "chrome",
+            use_persistent_profile=req.use_persistent_profile,
+        )
+        return res
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"웹 요소 선택기 시작 실패: {str(e)}")
+
+@router.get("/web-status")
+async def get_web_element_picker_status():
+    """현재 진행 중인 웹 요소 선택기의 상태('picking' | 'picked' | 'cancelled' | 'idle')와 선택 결과를 조회합니다."""
+    return playwright_service.get_web_picker_status()
+
+@router.post("/web-cancel")
+async def cancel_web_element_picker():
+    """진행 중인 웹 요소 선택기를 취소하고 브라우저 내 오버레이를 제거합니다."""
+    return await playwright_service.cancel_web_picker()
+

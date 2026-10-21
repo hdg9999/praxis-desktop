@@ -48,6 +48,13 @@ import {
   ChevronDown,
   ChevronRight,
   Wand2,
+  Globe,
+  MousePointerClick,
+  FormInput,
+  FileSearch,
+  Compass,
+  Info,
+  Code2,
 } from 'lucide-react';
 import {
   FlowNodeData,
@@ -57,8 +64,14 @@ import {
   SubflowVariableMapping,
   SubflowMappingDirection,
   NodeType,
+  WebElementData,
 } from '../../types';
-import { resolveImageUrl } from '../../services/api';
+import {
+  resolveImageUrl,
+  startWebPicker,
+  getWebPickerStatus,
+  cancelWebPicker,
+} from '../../services/api';
 import { AGENT_AVAILABLE_SKILLS, SKILL_ITEMS } from './skillRegistry';
 import { detectSubflowCallCycle } from '../../utils/flowValidator';
 import {
@@ -129,6 +142,34 @@ export const PropertyInspector: React.FC<PropertyInspectorProps> = ({
   const [groupAddSkillType, setGroupAddSkillType] = useState<string>('general_mouse_click');
   const [assignExistingNodeId, setAssignExistingNodeId] = useState<string>('');
 
+  // 비주얼 웹 요소 선택기 (Web Picker) 상태
+  const [webPickerActive, setWebPickerActive] = useState<boolean>(false);
+  const [webPickerError, setWebPickerError] = useState<string | null>(null);
+  const [webPickerCustomUrl, setWebPickerCustomUrl] = useState<string>('');
+  const [showWebPickerUrlInput, setShowWebPickerUrlInput] = useState<boolean>(false);
+  const webPickerPollRef = useRef<any>(null);
+
+  // 워크플로우 내 '웹 브라우저 열기(browser_navigate)' 노드에서 기본 URL 추론
+  const inferredBrowserUrl = useMemo(() => {
+    const navNodes = (allNodes || []).filter((n) => n?.data?.type === 'browser_navigate');
+    for (let i = navNodes.length - 1; i >= 0; i--) {
+      const u = String(navNodes[i]?.data?.config?.url || '').trim();
+      if (u && !u.includes('{{')) {
+        return u;
+      }
+    }
+    return 'https://www.naver.com';
+  }, [allNodes]);
+
+  useEffect(() => {
+    return () => {
+      if (webPickerPollRef.current) {
+        clearInterval(webPickerPollRef.current);
+        webPickerPollRef.current = null;
+      }
+    };
+  }, []);
+
   // 현재 노드가 가진 텍스트형 속성 목록 정의 (클릭/드래그 변수 삽입 대상)
   const nodeTextFields = useMemo((): { key: string; label: string }[] => {
     switch (nodeData.type) {
@@ -166,6 +207,27 @@ export const PropertyInspector: React.FC<PropertyInspectorProps> = ({
         return [{ key: 'process_name', label: isEn ? 'Process Name' : '프로세스명' }];
       case 'general_screenshot':
         return [{ key: 'file_path', label: isEn ? 'Save File Path' : '저장 파일 경로' }];
+      case 'browser_navigate':
+        return [{ key: 'url', label: isEn ? 'Web URL' : '이동할 웹 주소 (URL)' }];
+      case 'browser_click':
+        return [{ key: 'selector', label: isEn ? 'Target Selector / Text' : '대상 요소 선택자/텍스트' }];
+      case 'browser_fill':
+        return [
+          { key: 'text', label: isEn ? 'Text to Input' : '입력할 텍스트' },
+          { key: 'selector', label: isEn ? 'Target Selector / Placeholder' : '입력창 선택자/안내문구' },
+        ];
+      case 'browser_extract':
+        return [
+          { key: 'selector', label: isEn ? 'Target Selector' : '추출 영역 선택자' },
+          { key: 'attribute_name', label: isEn ? 'Attribute Name' : '추출할 속성명 (href 등)' },
+        ];
+      case 'browser_action':
+        return [
+          { key: 'target_value', label: isEn ? 'Target Tab / Selector' : '대상 탭 키워드 / 선택자' },
+          { key: 'option_value', label: isEn ? 'Option / Folder Path' : '선택 항목값 / 폴더 경로' },
+        ];
+      case 'browser_evaluate':
+        return [{ key: 'script', label: isEn ? 'JavaScript Code' : '실행할 JS 스크립트' }];
       case 'ai_ollama':
       case 'agent_basic':
         return [
@@ -182,6 +244,8 @@ export const PropertyInspector: React.FC<PropertyInspectorProps> = ({
     setOutVarError(null);
     setNewOutVarInput('');
     setShowDeclareInline(false);
+    setWebPickerError(null);
+    setWebPickerCustomUrl(cfg.web_element_data?.page_url || inferredBrowserUrl);
     lastFocusedElementRef.current = null;
     lastCursorPosRef.current = null;
     if (nodeTextFields.length > 0) {
@@ -519,6 +583,334 @@ export const PropertyInspector: React.FC<PropertyInspectorProps> = ({
 
   const handleBrowseFile = async () => {
     await handleBrowseFileForKey('program_path', '.exe,.bat,.cmd,.lnk,*');
+  };
+
+  // 비주얼 웹 요소 선택기(Web Picker) 시작 핸들러
+  const handleStartWebPicker = async (
+    targetFieldKey: 'selector' | 'target_value' = 'selector',
+    extraPatch?: Record<string, any>
+  ) => {
+    if (!selectedNode) return;
+    if (webPickerPollRef.current) {
+      clearInterval(webPickerPollRef.current);
+      webPickerPollRef.current = null;
+    }
+
+    setWebPickerError(null);
+    setWebPickerActive(true);
+
+    const targetNodeId = selectedNode.id;
+    const targetNodeLabel = nodeData.label;
+    const targetNodeType = nodeData.type;
+    const snapshotCfg = { ...cfg, ...(extraPatch || {}) };
+
+    try {
+      // Electron 데스크톱 앱인 경우 브라우저가 잘 보이도록 메인 창 최소화
+      if (window.electronAPI?.minimizeMainWindow) {
+        await window.electronAPI.minimizeMainWindow();
+      }
+
+      const startUrl = (webPickerCustomUrl || '').trim() || inferredBrowserUrl;
+      await startWebPicker({
+        url: startUrl,
+        browser_channel: 'chrome',
+        use_persistent_profile: true,
+      });
+
+      webPickerPollRef.current = setInterval(async () => {
+        try {
+          const statusRes = await getWebPickerStatus();
+          if (statusRes.status === 'picked' && statusRes.element) {
+            if (webPickerPollRef.current) {
+              clearInterval(webPickerPollRef.current);
+              webPickerPollRef.current = null;
+            }
+            setWebPickerActive(false);
+
+            if (window.electronAPI?.restoreMainWindow) {
+              await window.electronAPI.restoreMainWindow();
+            }
+
+            const elem = statusRes.element;
+            const nextCfg: Record<string, any> = {
+              ...snapshotCfg,
+              web_element_data: elem,
+            };
+
+            if (targetNodeType === 'browser_click') {
+              nextCfg.selector_type = elem.recommended_type || 'css';
+              nextCfg.selector = elem.recommended_selector || elem.css_selector;
+            } else if (targetNodeType === 'browser_fill') {
+              nextCfg.selector_type = elem.recommended_type || 'css';
+              nextCfg.selector = elem.recommended_selector || elem.css_selector;
+            } else if (targetNodeType === 'browser_extract') {
+              nextCfg.extract_target = 'element';
+              nextCfg.selector = elem.css_selector || elem.xpath;
+            } else if (targetNodeType === 'browser_action') {
+              nextCfg[targetFieldKey] = elem.recommended_selector || elem.css_selector;
+            } else {
+              nextCfg[targetFieldKey] = elem.recommended_selector || elem.css_selector;
+            }
+
+            onUpdateNodeData(targetNodeId, targetNodeLabel, nextCfg);
+          } else if (
+            statusRes.status === 'cancelled' ||
+            statusRes.status === 'error' ||
+            (!statusRes.active && statusRes.status !== 'picking')
+          ) {
+            if (webPickerPollRef.current) {
+              clearInterval(webPickerPollRef.current);
+              webPickerPollRef.current = null;
+            }
+            setWebPickerActive(false);
+            if (statusRes.error) {
+              setWebPickerError(statusRes.error);
+            }
+            if (window.electronAPI?.restoreMainWindow) {
+              await window.electronAPI.restoreMainWindow();
+            }
+          }
+        } catch (pollErr: any) {
+          if (webPickerPollRef.current) {
+            clearInterval(webPickerPollRef.current);
+            webPickerPollRef.current = null;
+          }
+          setWebPickerActive(false);
+          setWebPickerError(pollErr?.message || '웹 요소 선택기 상태 확인 중 오류 발생');
+          if (window.electronAPI?.restoreMainWindow) {
+            await window.electronAPI.restoreMainWindow();
+          }
+        }
+      }, 250);
+    } catch (err: any) {
+      setWebPickerActive(false);
+      setWebPickerError(err?.message || '웹 요소 선택기를 시작할 수 없습니다.');
+      if (window.electronAPI?.restoreMainWindow) {
+        await window.electronAPI.restoreMainWindow();
+      }
+    }
+  };
+
+  const handleCancelWebPicker = async () => {
+    if (webPickerPollRef.current) {
+      clearInterval(webPickerPollRef.current);
+      webPickerPollRef.current = null;
+    }
+    setWebPickerActive(false);
+    try {
+      await cancelWebPicker();
+    } catch {
+      // ignore
+    }
+  };
+
+  // 웹 전용 노드 공통 비주얼 Web Picker UI 렌더러
+  const renderWebElementPickerSection = (
+    targetFieldKey: 'selector' | 'target_value' = 'selector',
+    buttonLabel?: string,
+    extraPatch?: Record<string, any>
+  ) => {
+    const webElem: WebElementData | null = cfg.web_element_data || null;
+    const currentSelectorVal = String(cfg[targetFieldKey] ?? '');
+    const textCandidate = webElem?.placeholder || webElem?.text || webElem?.aria_label || '';
+
+    return (
+      <div className="p-3 rounded-xl bg-slate-950 border border-cyan-800/60 space-y-2.5">
+        <div className="flex items-center justify-between">
+          <span className="text-[11px] font-semibold text-cyan-300 flex items-center gap-1.5">
+            <Crosshair className="w-3.5 h-3.5 text-cyan-400" />
+            {isEn ? 'Visual Web Element Picker' : '비주얼 웹 요소 선택기 (Web Picker)'}
+          </span>
+          <button
+            type="button"
+            onClick={() => setShowWebPickerUrlInput((prev) => !prev)}
+            className="text-[10px] text-slate-400 hover:text-cyan-300 transition-colors flex items-center gap-0.5"
+            title={isEn ? 'Set initial URL if browser is not open yet' : '브라우저가 열려 있지 않을 때 자동으로 띄울 시작 URL 설정'}
+          >
+            <Globe className="w-3 h-3" />
+            <span>{showWebPickerUrlInput ? (isEn ? 'Hide URL' : '시작 URL 접기') : (isEn ? 'Initial URL' : '시작 URL 설정')}</span>
+          </button>
+        </div>
+
+        {/* 열려 있는 브라우저가 없을 때 사용할 기본 URL 설정란 (접이식) */}
+        {showWebPickerUrlInput && (
+          <div className="p-2 rounded-lg bg-slate-900/90 border border-slate-800 space-y-1">
+            <label className="text-[10px] text-slate-400 block">
+              {isEn
+                ? 'Fallback URL (used when no Playwright browser is open yet)'
+                : '열린 브라우저가 없을 때 자동으로 열 웹 주소 (URL)'}
+            </label>
+            <input
+              type="text"
+              value={webPickerCustomUrl}
+              onChange={(e) => setWebPickerCustomUrl(e.target.value)}
+              placeholder={inferredBrowserUrl}
+              className="w-full px-2 py-1 text-[11px] bg-slate-950 border border-slate-700 rounded text-slate-200 font-mono focus:outline-none focus:border-cyan-500"
+            />
+            <p className="text-[9px] text-slate-500">
+              {isEn
+                ? '* If a browser window is already open, it picks directly from the current active tab.'
+                : '* 이미 열려 있는 Playwright 브라우저 창이 있으면 현재 보고 있는 페이지에서 즉시 선택합니다.'}
+            </p>
+          </div>
+        )}
+
+        {/* 선택기 실행 / 취소 메인 버튼 */}
+        {!webPickerActive ? (
+          <button
+            type="button"
+            onClick={() => handleStartWebPicker(targetFieldKey, extraPatch)}
+            className="w-full py-2 px-3 rounded-lg text-xs font-semibold bg-gradient-to-r from-cyan-600 to-teal-600 hover:from-cyan-500 hover:to-teal-500 text-white shadow-md shadow-cyan-500/20 flex items-center justify-center gap-1.5 transition-all cursor-pointer"
+          >
+            <Crosshair className="w-3.5 h-3.5" />
+            <span>
+              {buttonLabel ||
+                (webElem
+                  ? isEn
+                    ? 'Reselect Element in Browser'
+                    : '브라우저에서 웹 요소 다시 선택'
+                  : isEn
+                  ? 'Pick Web Element in Browser'
+                  : '🎯 브라우저에서 웹 요소 선택')}
+            </span>
+          </button>
+        ) : (
+          <div className="space-y-2">
+            <div className="p-2.5 rounded-lg bg-cyan-950/60 border border-cyan-500/60 text-[11px] text-cyan-200 space-y-1 animate-pulse">
+              <div className="font-semibold text-cyan-300 flex items-center gap-1.5">
+                <Crosshair className="w-3.5 h-3.5 text-cyan-400" />
+                <span>
+                  {isEn
+                    ? 'Click target element in the Chrome browser...'
+                    : '브라우저 창에서 원하는 웹 요소를 클릭하세요...'}
+                </span>
+              </div>
+              <p className="text-[10px] text-slate-300 leading-relaxed">
+                {isEn
+                  ? 'Use the top floating bar in the browser to switch between [Pick Mode] and [Normal Navigation Mode] (for login/menus).'
+                  : '로그인이나 메뉴 이동이 필요하면 브라우저 상단 바의 [일반 브라우저 조작 전환] 버튼을 눌러 이동한 뒤 다시 선택하세요.'}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={handleCancelWebPicker}
+              className="w-full py-1.5 px-3 rounded-lg text-xs font-semibold bg-rose-950/70 hover:bg-rose-900/80 text-rose-200 border border-rose-700/60 transition-colors"
+            >
+              {isEn ? '✕ Cancel Web Picker (ESC)' : '✕ 웹 요소 선택 취소 (ESC)'}
+            </button>
+          </div>
+        )}
+
+        {webPickerError && (
+          <div className="p-2 rounded-lg bg-rose-950/40 border border-rose-800/60 text-[10px] text-rose-300 flex items-start gap-1.5">
+            <AlertCircle className="w-3.5 h-3.5 text-rose-400 shrink-0 mt-0.5" />
+            <span>{webPickerError}</span>
+          </div>
+        )}
+
+        {/* 선택된 웹 요소 메타데이터 요약 카드 + 원클릭 식별자 전환 버튼 */}
+        {webElem && (
+          <div className="p-2.5 rounded-lg bg-slate-900/95 border border-slate-800 space-y-2 text-[11px]">
+            <div className="flex items-center justify-between gap-1">
+              <div className="flex items-center gap-1.5 min-w-0">
+                <span className="px-1.5 py-0.5 rounded bg-cyan-950 text-cyan-300 border border-cyan-800/70 font-mono text-[10px] shrink-0">
+                  &lt;{webElem.tag}&gt;
+                </span>
+                {webElem.in_iframe && (
+                  <span className="px-1.5 py-0.5 rounded bg-amber-950/80 text-amber-300 border border-amber-700/60 font-semibold text-[9px] shrink-0">
+                    iframe 내부
+                  </span>
+                )}
+                <span className="text-slate-200 font-medium truncate" title={webElem.display_name}>
+                  {webElem.display_name}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => handleConfigChange('web_element_data', null)}
+                className="text-[10px] text-slate-500 hover:text-rose-400 shrink-0 px-1"
+                title={isEn ? 'Clear picked metadata' : '선택 정보 지우기'}
+              >
+                {isEn ? 'Clear' : '초기화'}
+              </button>
+            </div>
+
+            {/* 원클릭 Selector 방식 전환 칩 (추천 CSS / XPath / 텍스트·안내문구) */}
+            <div className="space-y-1 pt-1 border-t border-slate-800/80">
+              <div className="text-[10px] text-slate-400">
+                {isEn ? 'Quick Switch Identification Method:' : '식별자 방식 원클릭 전환:'}
+              </div>
+              <div className="flex flex-wrap gap-1">
+                {webElem.css_selector && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const patch: Record<string, any> = { [targetFieldKey]: webElem.css_selector };
+                      if (nodeData.type === 'browser_click' || nodeData.type === 'browser_fill') {
+                        patch.selector_type = 'css';
+                      }
+                      handleMultiConfigChange(patch);
+                    }}
+                    className={`px-2 py-0.5 rounded text-[10px] font-medium border transition-all ${
+                      currentSelectorVal === webElem.css_selector
+                        ? 'bg-cyan-600 text-white border-cyan-500'
+                        : 'bg-slate-950 text-slate-300 border-slate-700 hover:border-cyan-600'
+                    }`}
+                    title={webElem.css_selector}
+                  >
+                    ✨ CSS Selector
+                  </button>
+                )}
+
+                {webElem.xpath && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const patch: Record<string, any> = { [targetFieldKey]: webElem.xpath };
+                      if (nodeData.type === 'browser_click' || nodeData.type === 'browser_fill') {
+                        patch.selector_type = 'xpath';
+                      }
+                      handleMultiConfigChange(patch);
+                    }}
+                    className={`px-2 py-0.5 rounded text-[10px] font-medium border transition-all ${
+                      currentSelectorVal === webElem.xpath
+                        ? 'bg-cyan-600 text-white border-cyan-500'
+                        : 'bg-slate-950 text-slate-300 border-slate-700 hover:border-cyan-600'
+                    }`}
+                    title={webElem.xpath}
+                  >
+                    🧬 XPath
+                  </button>
+                )}
+
+                {textCandidate && nodeData.type !== 'browser_extract' && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const patch: Record<string, any> = { [targetFieldKey]: textCandidate };
+                      if (nodeData.type === 'browser_click') {
+                        patch.selector_type = 'text';
+                      } else if (nodeData.type === 'browser_fill') {
+                        patch.selector_type = 'placeholder';
+                      }
+                      handleMultiConfigChange(patch);
+                    }}
+                    className={`px-2 py-0.5 rounded text-[10px] font-medium border transition-all ${
+                      currentSelectorVal === textCandidate
+                        ? 'bg-cyan-600 text-white border-cyan-500'
+                        : 'bg-slate-950 text-slate-300 border-slate-700 hover:border-cyan-600'
+                    }`}
+                    title={textCandidate}
+                  >
+                    🔤 {nodeData.type === 'browser_fill' ? '안내문구(Placeholder)' : '화면 텍스트'}
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
   };
 
   return (
@@ -3212,6 +3604,605 @@ export const PropertyInspector: React.FC<PropertyInspectorProps> = ({
             </div>
           )}
 
+          {/* ==================== 🌐 웹 브라우저 전용 노드 7종 (Playwright) ==================== */}
+          {nodeData.type.startsWith('browser_') && (
+            <div className="p-2.5 rounded-xl bg-cyan-950/30 border border-cyan-800/50 text-[11px] text-cyan-200 space-y-1 mb-3">
+              <div className="font-semibold text-cyan-300 flex items-center gap-1.5">
+                <Globe className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+                <span>{isEn ? 'Playwright Web Automation Node' : 'Playwright 웹 전용 고급 스킬 노드'}</span>
+              </div>
+              <p className="text-[10px] text-slate-300 leading-relaxed">
+                {isEn
+                  ? 'Directly controls the browser DOM without moving your physical mouse cursor. Supports nested iframes, SPAs, and background execution.'
+                  : '물리 마우스 커서를 움직이지 않고 브라우저 DOM을 직접 제어합니다. 중첩 iframe, SPA 동적 탭, 백그라운드(Headless) 작업을 완벽 지원합니다.'}
+              </p>
+            </div>
+          )}
+
+          {/* B-1. 웹 브라우저 열기 / 이동 (browser_navigate) */}
+          {nodeData.type === 'browser_navigate' && (
+            <div className="space-y-3">
+              <div>
+                <label className="text-[11px] text-cyan-300 font-medium block mb-1">
+                  {isEn ? 'Target URL' : '이동할 웹 주소 (URL)'}
+                </label>
+                <input
+                  type="text"
+                  data-config-key="url"
+                  value={cfg.url ?? 'https://www.naver.com'}
+                  onChange={(e) => handleConfigChange('url', e.target.value)}
+                  placeholder="https://www.naver.com ({{변수명}} 치환 지원)"
+                  className="w-full px-2.5 py-1.5 text-xs bg-slate-950 border border-slate-700 rounded-lg text-slate-200 font-mono focus:outline-none focus:border-cyan-500"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-[11px] text-slate-400 block mb-1">
+                    {isEn ? 'Browser Engine' : '사용할 브라우저'}
+                  </label>
+                  <select
+                    value={cfg.browser_channel || 'chrome'}
+                    onChange={(e) => handleConfigChange('browser_channel', e.target.value)}
+                    className="w-full px-2 py-1.5 text-xs bg-slate-950 border border-slate-700 rounded-lg text-slate-200 focus:outline-none focus:border-cyan-500"
+                  >
+                    <option value="chrome">Google Chrome</option>
+                    <option value="msedge">Microsoft Edge</option>
+                    <option value="chromium">Playwright Chromium</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-[11px] text-slate-400 block mb-1">
+                    {isEn ? 'Execution Window Mode' : '실행 화면 모드'}
+                  </label>
+                  <select
+                    value={cfg.run_mode || 'headed'}
+                    onChange={(e) => handleConfigChange('run_mode', e.target.value)}
+                    className="w-full px-2 py-1.5 text-xs bg-slate-950 border border-slate-700 rounded-lg text-slate-200 focus:outline-none focus:border-cyan-500"
+                  >
+                    <option value="headed">{isEn ? 'Normal Window (No mouse hijack)' : '일반 창 표시 (마우스 비점유)'}</option>
+                    <option value="minimized">{isEn ? 'Minimized Background' : '최소화 창 (백그라운드)'}</option>
+                    <option value="headless">{isEn ? 'Headless (100% Hidden)' : 'Headless (창 완전 숨김)'}</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-[11px] text-slate-400 block mb-1">
+                    {isEn ? 'Load Wait Condition' : '로딩 완료 대기 기준'}
+                  </label>
+                  <select
+                    value={cfg.wait_until || 'domcontentloaded'}
+                    onChange={(e) => handleConfigChange('wait_until', e.target.value)}
+                    className="w-full px-2 py-1.5 text-xs bg-slate-950 border border-slate-700 rounded-lg text-slate-200 focus:outline-none focus:border-cyan-500"
+                  >
+                    <option value="domcontentloaded">{isEn ? 'DOM Ready (Fast)' : 'DOM 로드 완료 (빠름·권장)'}</option>
+                    <option value="load">{isEn ? 'Full Page Load' : '전체 리소스 로드 완료'}</option>
+                    <option value="networkidle">{isEn ? 'SPA Network Idle' : '네트워크 통신 유휴 (SPA 권장)'}</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-[11px] text-slate-400 block mb-1">
+                    {isEn ? 'Timeout (sec)' : '최대 대기 시간 (초)'}
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="120"
+                    step="1"
+                    value={cfg.timeout ?? 15}
+                    onChange={(e) => handleConfigChange('timeout', Number(e.target.value))}
+                    className="w-full px-2.5 py-1.5 text-xs bg-slate-950 border border-slate-700 rounded-lg text-slate-200 font-mono"
+                  />
+                </div>
+              </div>
+
+              <label className="flex items-start gap-2.5 p-2.5 rounded-xl bg-slate-950 border border-slate-800 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={cfg.use_persistent_profile ?? true}
+                  onChange={(e) => handleConfigChange('use_persistent_profile', e.target.checked)}
+                  className="mt-0.5 rounded bg-slate-900 border-slate-700 text-cyan-500 focus:ring-0"
+                />
+                <div>
+                  <div className="text-xs font-medium text-slate-200">
+                    {isEn ? 'Keep Login Session & Cookies (Persistent Profile)' : '전용 브라우저 프로필로 로그인 세션/쿠키 유지'}
+                  </div>
+                  <p className="text-[10px] text-slate-400 mt-0.5 leading-relaxed">
+                    {isEn
+                      ? 'Preserves login sessions across runs so background/headless tasks stay logged in.'
+                      : '최초 1회 로그인해 두면 이후 백그라운드(Headless 포함) 실행에서도 로그인 상태가 그대로 유지됩니다.'}
+                  </p>
+                </div>
+              </label>
+
+              <label className="flex items-center gap-2 p-2 rounded-lg bg-slate-950 border border-slate-800 cursor-pointer text-xs text-slate-300">
+                <input
+                  type="checkbox"
+                  checked={!!cfg.new_tab}
+                  onChange={(e) => handleConfigChange('new_tab', e.target.checked)}
+                  className="rounded bg-slate-900 border-slate-700 text-cyan-500 focus:ring-0"
+                />
+                <span>{isEn ? 'Open in a new tab (if browser is already open)' : '이미 열린 브라우저가 있으면 새 탭에서 열기'}</span>
+              </label>
+            </div>
+          )}
+
+          {/* B-2. 웹 요소 클릭 (browser_click) */}
+          {nodeData.type === 'browser_click' && (
+            <div className="space-y-3">
+              {renderWebElementPickerSection('selector')}
+
+              <div>
+                <label className="text-[11px] text-slate-400 block mb-1">
+                  {isEn ? 'Target Identification Mode' : '대상 요소 식별 방식'}
+                </label>
+                <select
+                  value={cfg.selector_type || 'auto'}
+                  onChange={(e) => handleConfigChange('selector_type', e.target.value)}
+                  className="w-full px-2.5 py-1.5 text-xs bg-slate-950 border border-slate-700 rounded-lg text-slate-200 focus:outline-none focus:border-cyan-500"
+                >
+                  <option value="auto">{isEn ? 'Auto Detect (Text / CSS / XPath / Ref)' : '자동 판별 (화면 텍스트 / CSS / XPath 모두 지원)'}</option>
+                  <option value="text">{isEn ? 'Visible Text / Button Name' : '화면에 보이는 버튼/링크 텍스트'}</option>
+                  <option value="css">CSS Selector (예: #login-btn, .submit)</option>
+                  <option value="xpath">XPath (예: //button[@type="submit"])</option>
+                  <option value="role">ARIA Role (예: button:로그인)</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="text-[11px] text-cyan-300 font-medium block mb-1">
+                  {isEn ? 'Target Selector or Text' : '클릭할 대상 (텍스트 또는 Selector)'}
+                </label>
+                <input
+                  type="text"
+                  data-config-key="selector"
+                  value={cfg.selector ?? ''}
+                  onChange={(e) => handleConfigChange('selector', e.target.value)}
+                  placeholder={isEn ? 'e.g. Login, #submit-btn, //a[contains(text(),"More")]' : '예: 로그인, 검색, #btn-submit ({{변수명}} 치환 지원)'}
+                  className="w-full px-2.5 py-1.5 text-xs bg-slate-950 border border-slate-700 rounded-lg text-slate-200 font-mono focus:outline-none focus:border-cyan-500"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-[11px] text-slate-400 block mb-1">
+                    {isEn ? 'Click Type' : '클릭 종류'}
+                  </label>
+                  <select
+                    value={cfg.click_type || 'single'}
+                    onChange={(e) => handleConfigChange('click_type', e.target.value)}
+                    className="w-full px-2 py-1.5 text-xs bg-slate-950 border border-slate-700 rounded-lg text-slate-200"
+                  >
+                    <option value="single">{isEn ? 'Single Left Click' : '단일 좌클릭'}</option>
+                    <option value="double">{isEn ? 'Double Click' : '더블 클릭'}</option>
+                    <option value="right">{isEn ? 'Right Click' : '우클릭'}</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-[11px] text-slate-400 block mb-1">
+                    {isEn ? 'Wait Timeout (sec)' : '탐색 대기 시간 (초)'}
+                  </label>
+                  <input
+                    type="number"
+                    min="0.5"
+                    max="60"
+                    step="0.5"
+                    value={cfg.timeout ?? 5.0}
+                    onChange={(e) => handleConfigChange('timeout', Number(e.target.value))}
+                    className="w-full px-2.5 py-1.5 text-xs bg-slate-950 border border-slate-700 rounded-lg text-slate-200 font-mono"
+                  />
+                </div>
+              </div>
+
+              <label className="flex items-start gap-2 p-2 rounded-lg bg-slate-950 border border-slate-800 cursor-pointer text-xs text-slate-300">
+                <input
+                  type="checkbox"
+                  checked={cfg.iframe_auto_search ?? true}
+                  onChange={(e) => handleConfigChange('iframe_auto_search', e.target.checked)}
+                  className="mt-0.5 rounded bg-slate-900 border-slate-700 text-cyan-500 focus:ring-0"
+                />
+                <div>
+                  <div className="font-medium text-slate-200">
+                    {isEn ? 'Auto-traverse nested iframes' : '중첩 iframe 내부까지 자동 관통 탐색'}
+                  </div>
+                  <p className="text-[10px] text-slate-400 mt-0.5">
+                    {isEn
+                      ? 'Automatically searches inside all child iframes on legacy web pages.'
+                      : '레거시 웹페이지에서 메인 프레임에 요소가 없으면 모든 하위 iframe을 자동으로 뒤져 클릭합니다.'}
+                  </p>
+                </div>
+              </label>
+
+              <label className="flex items-start gap-2 p-2 rounded-lg bg-slate-950 border border-slate-800 cursor-pointer text-xs text-slate-300">
+                <input
+                  type="checkbox"
+                  checked={!!cfg.force_click}
+                  onChange={(e) => handleConfigChange('force_click', e.target.checked)}
+                  className="mt-0.5 rounded bg-slate-900 border-slate-700 text-cyan-500 focus:ring-0"
+                />
+                <div>
+                  <div className="font-medium text-slate-200">
+                    {isEn ? 'Force Click (Bypass overlay checks)' : '강제 클릭 (가려진 레이어/이벤트 제약 무시)'}
+                  </div>
+                  <p className="text-[10px] text-slate-400 mt-0.5">
+                    {isEn
+                      ? 'Dispatches click even if covered by transparent overlays in custom SPA/legacy UI.'
+                      : '투명 배너나 독자 UI 레이어에 가려져 일반 클릭이 막힐 때 강제로 클릭 이벤트를 발생시킵니다.'}
+                  </p>
+                </div>
+              </label>
+            </div>
+          )}
+
+          {/* B-3. 웹 텍스트 입력 (browser_fill) */}
+          {nodeData.type === 'browser_fill' && (
+            <div className="space-y-3">
+              {renderWebElementPickerSection('selector')}
+
+              <div>
+                <label className="text-[11px] text-slate-400 block mb-1">
+                  {isEn ? 'Input Field Identification Mode' : '입력창 식별 방식'}
+                </label>
+                <select
+                  value={cfg.selector_type || 'auto'}
+                  onChange={(e) => handleConfigChange('selector_type', e.target.value)}
+                  className="w-full px-2.5 py-1.5 text-xs bg-slate-950 border border-slate-700 rounded-lg text-slate-200 focus:outline-none focus:border-cyan-500"
+                >
+                  <option value="auto">{isEn ? 'Auto Detect (Placeholder / Label / CSS / XPath)' : '자동 판별 (안내문구 / 라벨 / CSS / XPath)'}</option>
+                  <option value="placeholder">{isEn ? 'Placeholder or Label Text' : '입력창 안내문구(Placeholder) 또는 라벨'}</option>
+                  <option value="css">CSS Selector (예: input[name="query"])</option>
+                  <option value="xpath">XPath (예: //input[@type="text"])</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="text-[11px] text-cyan-300 font-medium block mb-1">
+                  {isEn ? 'Target Input Selector / Placeholder' : '대상 입력창 (안내문구 또는 Selector)'}
+                </label>
+                <input
+                  type="text"
+                  data-config-key="selector"
+                  value={cfg.selector ?? ''}
+                  onChange={(e) => handleConfigChange('selector', e.target.value)}
+                  placeholder={isEn ? 'e.g. Search, #query, input[name="id"]' : '예: 검색어를 입력해 주세요, #query, input[name="id"]'}
+                  className="w-full px-2.5 py-1.5 text-xs bg-slate-950 border border-slate-700 rounded-lg text-slate-200 font-mono focus:outline-none focus:border-cyan-500"
+                />
+              </div>
+
+              <div>
+                <label className="text-[11px] text-emerald-300 font-medium block mb-1">
+                  {isEn ? 'Text to Input' : '입력할 텍스트 내용'}
+                </label>
+                <input
+                  type="text"
+                  data-config-key="text"
+                  value={cfg.text ?? ''}
+                  onChange={(e) => handleConfigChange('text', e.target.value)}
+                  placeholder={isEn ? 'Enter text ({{variable}} supported)' : '입력할 텍스트 ({{변수명}} 치환 지원)'}
+                  className="w-full px-2.5 py-1.5 text-xs bg-slate-950 border border-slate-700 rounded-lg text-slate-200 focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-[11px] text-slate-400 block mb-1">
+                    {isEn ? 'Input Method' : '입력 방식'}
+                  </label>
+                  <select
+                    value={cfg.input_method || 'fill'}
+                    onChange={(e) => handleConfigChange('input_method', e.target.value)}
+                    className="w-full px-2 py-1.5 text-xs bg-slate-950 border border-slate-700 rounded-lg text-slate-200"
+                  >
+                    <option value="fill">{isEn ? 'Instant Fill (Fast)' : '즉시 채우기 (빠름·권장)'}</option>
+                    <option value="type">{isEn ? 'Sequential Key Events (SPA)' : '한 글자씩 키 이벤트 발생 (SPA용)'}</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-[11px] text-slate-400 block mb-1">
+                    {isEn ? 'Wait Timeout (sec)' : '탐색 대기 시간 (초)'}
+                  </label>
+                  <input
+                    type="number"
+                    min="0.5"
+                    max="60"
+                    step="0.5"
+                    value={cfg.timeout ?? 5.0}
+                    onChange={(e) => handleConfigChange('timeout', Number(e.target.value))}
+                    className="w-full px-2.5 py-1.5 text-xs bg-slate-950 border border-slate-700 rounded-lg text-slate-200 font-mono"
+                  />
+                </div>
+              </div>
+
+              <label className="flex items-center gap-2 p-2 rounded-lg bg-slate-950 border border-slate-800 cursor-pointer text-xs text-slate-200">
+                <input
+                  type="checkbox"
+                  checked={cfg.press_enter ?? true}
+                  onChange={(e) => handleConfigChange('press_enter', e.target.checked)}
+                  className="rounded bg-slate-900 border-slate-700 text-emerald-500 focus:ring-0"
+                />
+                <span>{isEn ? 'Press Enter key automatically after input' : '입력 완료 후 자동으로 Enter 키 전송 (검색/제출)'}</span>
+              </label>
+
+              <label className="flex items-center gap-2 p-2 rounded-lg bg-slate-950 border border-slate-800 cursor-pointer text-xs text-slate-300">
+                <input
+                  type="checkbox"
+                  checked={cfg.iframe_auto_search ?? true}
+                  onChange={(e) => handleConfigChange('iframe_auto_search', e.target.checked)}
+                  className="rounded bg-slate-900 border-slate-700 text-cyan-500 focus:ring-0"
+                />
+                <span>{isEn ? 'Auto-traverse nested iframes' : '중첩 iframe 내부 입력창 자동 관통 탐색'}</span>
+              </label>
+            </div>
+          )}
+
+          {/* B-4. 웹 데이터 / 본문 추출 (browser_extract) */}
+          {nodeData.type === 'browser_extract' && (
+            <div className="space-y-3">
+              <div>
+                <label className="text-[11px] text-slate-400 block mb-1">
+                  {isEn ? 'Extraction Scope' : '추출 범위'}
+                </label>
+                <select
+                  value={cfg.extract_target || 'full_page'}
+                  onChange={(e) => handleConfigChange('extract_target', e.target.value)}
+                  className="w-full px-2.5 py-1.5 text-xs bg-slate-950 border border-slate-700 rounded-lg text-slate-200 focus:outline-none focus:border-teal-500"
+                >
+                  <option value="full_page">{isEn ? 'Full Page Content (including iframes)' : '웹페이지 전체 본문 (하위 iframe 통합 추출)'}</option>
+                  <option value="element">{isEn ? 'Specific Element Only (Selector)' : '특정 웹 요소 영역만 지정 추출'}</option>
+                </select>
+              </div>
+
+              {renderWebElementPickerSection(
+                'selector',
+                cfg.extract_target === 'element'
+                  ? undefined
+                  : isEn
+                  ? '🎯 Pick Specific Area in Browser to Extract'
+                  : '🎯 브라우저에서 추출할 특정 영역 선택',
+                { extract_target: 'element' }
+              )}
+
+              {cfg.extract_target === 'element' && (
+                <div>
+                  <label className="text-[11px] text-teal-300 font-medium block mb-1">
+                    {isEn ? 'Target Element Selector' : '추출할 영역 선택자 (CSS / XPath)'}
+                  </label>
+                  <input
+                    type="text"
+                    data-config-key="selector"
+                    value={cfg.selector ?? ''}
+                    onChange={(e) => handleConfigChange('selector', e.target.value)}
+                    placeholder="예: #articleBody, .news_list, table.report"
+                    className="w-full px-2.5 py-1.5 text-xs bg-slate-950 border border-slate-700 rounded-lg text-slate-200 font-mono"
+                  />
+                </div>
+              )}
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-[11px] text-slate-400 block mb-1">
+                    {isEn ? 'Output Format' : '추출 포맷'}
+                  </label>
+                  <select
+                    value={cfg.extract_format || 'markdown'}
+                    onChange={(e) => handleConfigChange('extract_format', e.target.value)}
+                    className="w-full px-2 py-1.5 text-xs bg-slate-950 border border-slate-700 rounded-lg text-slate-200"
+                  >
+                    <option value="markdown">{isEn ? 'Markdown (Preserves Tables)' : '마크다운 (표/제목 구조 보존·AI 최적)'}</option>
+                    <option value="text">{isEn ? 'Plain Text' : '순수 일반 텍스트'}</option>
+                    <option value="html">{isEn ? 'Raw Inner HTML' : '원본 HTML 코드'}</option>
+                    {cfg.extract_target === 'element' && (
+                      <option value="attribute">{isEn ? 'HTML Attribute (href, src...)' : '특정 속성값 (href 링크 주소 등)'}</option>
+                    )}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-[11px] text-slate-400 block mb-1">
+                    {isEn ? 'Max Length (chars)' : '최대 글자 수 제한'}
+                  </label>
+                  <input
+                    type="number"
+                    min="500"
+                    max="100000"
+                    step="500"
+                    value={cfg.max_length ?? 15000}
+                    onChange={(e) => handleConfigChange('max_length', Number(e.target.value))}
+                    className="w-full px-2.5 py-1.5 text-xs bg-slate-950 border border-slate-700 rounded-lg text-slate-200 font-mono"
+                  />
+                </div>
+              </div>
+
+              {cfg.extract_target === 'element' && cfg.extract_format === 'attribute' && (
+                <div>
+                  <label className="text-[11px] text-slate-400 block mb-1">
+                    {isEn ? 'Attribute Name' : '추출할 HTML 속성명'}
+                  </label>
+                  <input
+                    type="text"
+                    data-config-key="attribute_name"
+                    value={cfg.attribute_name ?? 'href'}
+                    onChange={(e) => handleConfigChange('attribute_name', e.target.value)}
+                    placeholder="href, src, value, data-id..."
+                    className="w-full px-2.5 py-1.5 text-xs bg-slate-950 border border-slate-700 rounded-lg text-slate-200 font-mono"
+                  />
+                </div>
+              )}
+
+              <div>
+                <label className="text-[11px] text-slate-400 font-medium">
+                  {isEn ? 'Output Variable Name' : '추출 데이터 저장 변수명'}
+                </label>
+                {renderOutputVariableSelector('web_content', ['string', 'json'], 'border-teal-700 text-teal-300')}
+              </div>
+            </div>
+          )}
+
+          {/* B-5. 웹 탭 / 드롭다운 / 다운로드 / 탐색 제어 (browser_action) */}
+          {nodeData.type === 'browser_action' && (
+            <div className="space-y-3">
+              <div>
+                <label className="text-[11px] text-indigo-300 font-medium block mb-1">
+                  {isEn ? 'Browser Control Action' : '수행할 웹 제어 동작'}
+                </label>
+                <select
+                  value={cfg.action_type || 'switch_tab'}
+                  onChange={(e) => handleConfigChange('action_type', e.target.value)}
+                  className="w-full px-2.5 py-1.5 text-xs bg-slate-950 border border-slate-700 rounded-lg text-slate-200 focus:outline-none focus:border-indigo-500"
+                >
+                  <option value="switch_tab">{isEn ? 'Switch Browser Tab / Popup' : '탭 전환 (새로 열린 탭/팝업 또는 제목 검색)'}</option>
+                  <option value="close_tab">{isEn ? 'Close Current Tab' : '현재 탭 닫기'}</option>
+                  <option value="go_back">{isEn ? 'Navigate Back' : '뒤로 가기 (Back)'}</option>
+                  <option value="go_forward">{isEn ? 'Navigate Forward' : '앞으로 가기 (Forward)'}</option>
+                  <option value="reload">{isEn ? 'Reload Page' : '새로고침 (Reload)'}</option>
+                  <option value="select_option">{isEn ? 'Select Dropdown (<select>) Option' : '드롭다운(<select>) 항목 선택'}</option>
+                  <option value="wait_for_element">{isEn ? 'Wait for Element to Appear (SPA)' : '특정 웹 요소가 나타날 때까지 동적 대기 (SPA)'}</option>
+                  <option value="wait_for_download">{isEn ? 'Trigger & Wait for File Download' : '파일 다운로드 실행 및 완료 대기'}</option>
+                </select>
+              </div>
+
+              {(cfg.action_type === 'select_option' ||
+                cfg.action_type === 'wait_for_element' ||
+                cfg.action_type === 'wait_for_download') &&
+                renderWebElementPickerSection('target_value')}
+
+              {(cfg.action_type === 'switch_tab' ||
+                cfg.action_type === 'select_option' ||
+                cfg.action_type === 'wait_for_element' ||
+                cfg.action_type === 'wait_for_download') && (
+                <div>
+                  <label className="text-[11px] text-slate-300 font-medium block mb-1">
+                    {cfg.action_type === 'switch_tab'
+                      ? (isEn ? 'Target Tab Keyword (or "latest" / "next")' : '전환할 탭 키워드 (latest=가장 최근 탭, next=다음 탭, 또는 제목 일부)')
+                      : cfg.action_type === 'select_option'
+                      ? (isEn ? 'Dropdown (<select>) Selector' : '대상 드롭다운(<select>) 선택자')
+                      : cfg.action_type === 'wait_for_download'
+                      ? (isEn ? 'Download Button Selector/Text (Optional)' : '클릭할 다운로드 버튼 선택자/텍스트 (비워두면 직전 다운로드 대기)')
+                      : (isEn ? 'Element Selector/Text to Wait For' : '기다릴 웹 요소 선택자 또는 텍스트')}
+                  </label>
+                  <input
+                    type="text"
+                    data-config-key="target_value"
+                    value={cfg.target_value ?? ''}
+                    onChange={(e) => handleConfigChange('target_value', e.target.value)}
+                    placeholder={
+                      cfg.action_type === 'switch_tab'
+                        ? 'latest, next, 또는 탭 제목 키워드'
+                        : '예: 다운로드, #download-btn, select[name="category"]'
+                    }
+                    className="w-full px-2.5 py-1.5 text-xs bg-slate-950 border border-slate-700 rounded-lg text-slate-200 font-mono"
+                  />
+                </div>
+              )}
+
+              {(cfg.action_type === 'select_option' || cfg.action_type === 'wait_for_download') && (
+                <div>
+                  <label className="text-[11px] text-slate-300 font-medium block mb-1">
+                    {cfg.action_type === 'select_option'
+                      ? (isEn ? 'Option Label or Value to Select' : '선택할 항목 이름(Label) 또는 값(Value)')
+                      : (isEn ? 'Download Save Directory (Optional)' : '다운로드 저장 폴더 경로 (비워두면 기본 storage/downloads)')}
+                  </label>
+                  <input
+                    type="text"
+                    data-config-key="option_value"
+                    value={cfg.option_value ?? ''}
+                    onChange={(e) => handleConfigChange('option_value', e.target.value)}
+                    placeholder={cfg.action_type === 'select_option' ? '예: 서울특별시, 2026년' : '예: C:\\Downloads'}
+                    className="w-full px-2.5 py-1.5 text-xs bg-slate-950 border border-slate-700 rounded-lg text-slate-200 font-mono"
+                  />
+                </div>
+              )}
+
+              <div>
+                <label className="text-[11px] text-slate-400 block mb-1">
+                  {isEn ? 'Timeout (sec)' : '최대 대기 시간 (초)'}
+                </label>
+                <input
+                  type="number"
+                  min="1"
+                  max="300"
+                  step="1"
+                  value={cfg.timeout ?? 10.0}
+                  onChange={(e) => handleConfigChange('timeout', Number(e.target.value))}
+                  className="w-full px-2.5 py-1.5 text-xs bg-slate-950 border border-slate-700 rounded-lg text-slate-200 font-mono"
+                />
+              </div>
+
+              {cfg.action_type === 'wait_for_download' && (
+                <div>
+                  <label className="text-[11px] text-slate-400 font-medium">
+                    {isEn ? 'Downloaded File Path Variable' : '저장된 파일 전체 경로를 담을 변수명'}
+                  </label>
+                  {renderOutputVariableSelector('downloaded_file_path', ['string', 'json'], 'border-indigo-700 text-indigo-300')}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* B-6. 현재 웹페이지 정보 읽기 (browser_get_info) */}
+          {nodeData.type === 'browser_get_info' && (
+            <div className="space-y-3">
+              <div>
+                <label className="text-[11px] text-slate-400 block mb-1">
+                  {isEn ? 'Information to Read' : '읽어올 웹페이지 정보 종류'}
+                </label>
+                <select
+                  value={cfg.info_type || 'url'}
+                  onChange={(e) => handleConfigChange('info_type', e.target.value)}
+                  className="w-full px-2.5 py-1.5 text-xs bg-slate-950 border border-slate-700 rounded-lg text-slate-200 focus:outline-none focus:border-blue-500"
+                >
+                  <option value="url">{isEn ? 'Current Page URL' : '현재 웹페이지 주소 (URL)'}</option>
+                  <option value="title">{isEn ? 'Current Page Title' : '현재 웹페이지 제목 (Title)'}</option>
+                  <option value="tabs_json">{isEn ? 'All Open Tabs List (JSON)' : '열려 있는 전체 탭 목록 (JSON)'}</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="text-[11px] text-slate-400 font-medium">
+                  {isEn ? 'Output Variable Name' : '결과 저장 변수명'}
+                </label>
+                {renderOutputVariableSelector('web_info', ['string', 'json'], 'border-blue-700 text-blue-300')}
+              </div>
+            </div>
+          )}
+
+          {/* B-7. 웹 자바스크립트(JS) 실행 (browser_evaluate) */}
+          {nodeData.type === 'browser_evaluate' && (
+            <div className="space-y-3">
+              <div>
+                <label className="text-[11px] text-amber-300 font-medium block mb-1">
+                  {isEn ? 'JavaScript Code to Execute in Page' : '웹페이지 내부에서 실행할 JavaScript 코드'}
+                </label>
+                <textarea
+                  rows={5}
+                  data-config-key="script"
+                  value={cfg.script ?? 'return document.title;'}
+                  onChange={(e) => handleConfigChange('script', e.target.value)}
+                  placeholder="예: return document.querySelector('#grid').innerText;"
+                  className="w-full px-2.5 py-1.5 text-xs bg-slate-950 border border-slate-700 rounded-lg text-amber-200 font-mono focus:outline-none focus:border-amber-500"
+                />
+                <p className="text-[10px] text-slate-400 mt-1 leading-relaxed">
+                  💡 {isEn
+                    ? 'Use "return ..." to store the evaluated result into the output variable. Ideal for legacy custom UI frameworks.'
+                    : '비표준 레거시 웹(WebSquare, 캔버스 UI 등)의 전역 함수를 직접 호출하거나 값을 추출할 때 사용하세요. return 문의 결과가 출력 변수에 저장됩니다.'}
+                </p>
+              </div>
+
+              <div>
+                <label className="text-[11px] text-slate-400 font-medium">
+                  {isEn ? 'Return Value Output Variable' : 'JS 반환값 저장 변수명'}
+                </label>
+                {renderOutputVariableSelector('js_result', ['string', 'number', 'boolean', 'json'], 'border-amber-700 text-amber-300')}
+              </div>
+            </div>
+          )}
+
           {/* AI 노드 (Ollama) */}
           {isAi && (
             <div className="space-y-3">
@@ -3476,9 +4467,11 @@ export const PropertyInspector: React.FC<PropertyInspectorProps> = ({
                   <span className="text-[10px] text-slate-500">
                     {cfg.skill_mode === 'custom'
                       ? `${(cfg.custom_skills || []).length}${isEn ? ' selected' : '개 선택됨'}`
+                      : cfg.preset_name === 'web_playwright'
+                      ? (isEn ? 'Web Playwright (7 skills)' : '웹 전용 (7종)')
                       : cfg.preset_name === 'all'
-                      ? (isEn ? 'All (11 skills)' : '전체 (11종)')
-                      : (isEn ? 'Default (8 skills)' : '기본 (8종)')}
+                      ? (isEn ? 'All (27 skills)' : '전체 (27종)')
+                      : (isEn ? 'Default (11 skills)' : '기본 화면 조작 (11종)')}
                   </span>
                 </div>
 
@@ -3518,13 +4511,35 @@ export const PropertyInspector: React.FC<PropertyInspectorProps> = ({
                     >
                       <option value="basic_interaction">
                         {isEn
-                          ? 'Basic UI Interaction (Mouse, Keyboard, Window, Screenshot, UI Scan - 8 skills)'
-                          : '기본 화면 상호작용 (마우스/키보드/창/스크린샷/UI스캔 8종)'}
+                          ? 'Basic Desktop UI Interaction (Mouse, Keyboard, Window, UI Scan - 11 skills)'
+                          : '기본 데스크톱 화면 조작 (마우스/키보드/창/UI스캔 11종)'}
+                      </option>
+                      <option value="web_playwright">
+                        {isEn
+                          ? '🌐 Web Browser Automation (Playwright DOM/iframe/Background - 7 skills)'
+                          : '🌐 웹 브라우저 자동화 (Playwright 웹 전용·백그라운드 7종)'}
                       </option>
                       <option value="all">
-                        {isEn ? 'All (All 11 skills included)' : '전체 (모든 스킬 11종 포함)'}
+                        {isEn ? 'All (All 27 skills included)' : '전체 (모든 스킬 27종 포함)'}
                       </option>
                     </select>
+
+                    {/* 웹 브라우저 자동화 프리셋 선택 시 안내 배지 */}
+                    {cfg.preset_name === 'web_playwright' && (
+                      <div className="p-2.5 bg-cyan-950/40 border border-cyan-800/60 rounded-lg flex items-start gap-2 text-cyan-200 text-[11px] leading-relaxed">
+                        <Globe className="w-4 h-4 shrink-0 text-cyan-400 mt-0.5" />
+                        <div>
+                          <span className="font-semibold text-cyan-300">
+                            {isEn ? 'Playwright Web Agent Mode Enabled' : 'Playwright 웹 전용 에이전트 프리셋'}
+                          </span>
+                          <p className="text-[10px] text-cyan-300/90 mt-0.5">
+                            {isEn
+                              ? 'Uses DOM ref IDs instead of pixel coordinates for high accuracy on small models, without moving your mouse cursor.'
+                              : '픽셀 좌표 추측 대신 웹 요소 고유 번호(ref)와 마크다운 본문 추출을 사용하여, 소형 모델에서도 높은 정확도로 마우스 간섭 없이 웹 업무를 수행합니다.'}
+                          </p>
+                        </div>
+                      </div>
+                    )}
 
                     {/* 전체 프리셋 선택 시 소형 모델 경고 배지 */}
                     {cfg.preset_name === 'all' && (
