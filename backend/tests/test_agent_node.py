@@ -391,4 +391,350 @@ async def test_agent_node_ollama_error_handling(mock_context):
     assert "context window exceeded" in error_events[0].kwargs.get("content", "")
 
 
+@pytest.mark.asyncio
+async def test_agent_node_max_steps_exceeded_fails_and_blocks_next_node():
+    """
+    [TO-BE 핵심 검증 1]
+    에이전트가 max_steps 동안 계속 도구만 호출(다음 단계가 필요하다고 추론)하다가 루프 횟수가 초과된 경우,
+    마지막 스텝의 thinking 내용이 남아있더라도 성공(SUCCESS)으로 둔갑하지 않고
+    명확히 실패(ERROR / FAILED)로 처리되어 후속 노드가 절대 실행되지 않는지 검증.
+    """
+    engine = FlowEngine()
+    session_id = f"ses_test_max_steps_{uuid.uuid4().hex[:8]}"
+
+    graph_data = {
+        "nodes": [
+            {
+                "id": "node_start",
+                "type": "flow_start",
+                "position": {"x": 0, "y": 0},
+                "data": {"label": "시작", "config": {}}
+            },
+            {
+                "id": "node_agent",
+                "type": "agent_basic",
+                "position": {"x": 200, "y": 0},
+                "data": {
+                    "label": "기본 에이전트",
+                    "config": {
+                        "model": "qwen3.8:27b",
+                        "prompt": "브라우저를 열고 오늘 주요 뉴스를 확인해줘",
+                        "max_steps": 2,
+                        "output_variable": "agent_result"
+                    }
+                }
+            },
+            {
+                "id": "node_next_clip",
+                "type": "general_clipboard_copy",
+                "position": {"x": 400, "y": 0},
+                "data": {
+                    "label": "AI 결과 클립보드 복사",
+                    "config": {"text": "{{agent_result}}"}
+                }
+            },
+            {
+                "id": "node_end",
+                "type": "flow_end",
+                "position": {"x": 600, "y": 0},
+                "data": {"label": "끝", "config": {}}
+            }
+        ],
+        "edges": [
+            {"id": "e1", "source": "node_start", "target": "node_agent"},
+            {"id": "e2", "source": "node_agent", "target": "node_next_clip"},
+            {"id": "e3", "source": "node_next_clip", "target": "node_end"}
+        ]
+    }
+
+    async def mock_loop_exhaustion(*args, **kwargs):
+        yield {
+            "type": "thinking",
+            "token": "Chrome 창이 없네요. 다른 브라우저 창이 있는지 확인해 보겠습니다."
+        }
+        yield {
+            "type": "done",
+            "message": {
+                "content": "",
+                "tool_calls": [{
+                    "function": {
+                        "name": "window_activate",
+                        "arguments": {"title": "브라우저"}
+                    }
+                }]
+            }
+        }
+
+    events = []
+    async def mock_callback(payload):
+        events.append(payload)
+
+    with patch("app.services.ollama_client.ollama_client.stream_chat", side_effect=mock_loop_exhaustion), \
+         patch("app.nodes.agent.execute_agent_tool", return_value="[실패] 제목에 '브라우저'이(가) 포함된 윈도우를 찾을 수 없습니다."):
+        session = await engine.run_flow(
+            flow_id="flow_max_steps_fail",
+            flow_name="루프 초과 실패 테스트",
+            graph_data=graph_data,
+            session_id=session_id,
+            event_callback=mock_callback
+        )
+
+    # 1. 전체 세션 상태가 SUCCESS가 아닌 FAILED여야 함
+    assert session.status == "FAILED"
+
+    # 2. 에이전트 노드는 SUCCESS가 아닌 ERROR 이벤트를 방출해야 함
+    agent_success_events = [e for e in events if e.get("node_id") == "node_agent" and e.get("event_type") == "SUCCESS"]
+    agent_error_events = [e for e in events if e.get("node_id") == "node_agent" and e.get("event_type") == "ERROR"]
+    assert len(agent_success_events) == 0
+    assert len(agent_error_events) == 1
+    assert "최대 추론 루프 횟수(2회)를 초과" in agent_error_events[0].get("content", "")
+
+    # 3. 후속 노드('AI 결과 클립보드 복사')는 절대 실행되지 않아야 함
+    next_node_events = [e for e in events if e.get("node_id") == "node_next_clip"]
+    assert len(next_node_events) == 0
+
+
+@pytest.mark.asyncio
+async def test_agent_node_json_decision_success_extracts_clean_result(mock_context):
+    """
+    [TO-BE 핵심 검증 2]
+    에이전트가 최종 응답을 JSON 형식({"thought": "...", "is_success": true, "result": "..."})으로 반환했을 때,
+    성공(True)으로 판정하고 출력 변수에는 JSON 껍데기가 아닌 깔끔한 result 본문만 저장되는지 검증.
+    """
+    config = {
+        "model": "qwen3.8:27b",
+        "prompt": "오늘 주요 뉴스 요약해줘",
+        "max_steps": 5,
+        "output_variable": "agent_result"
+    }
+    agent = AgentNode("agent_json_ok", "JSON 성공 에이전트", config)
+
+    json_resp = (
+        '{"thought": "브라우저에서 주요 뉴스 3건을 확인하고 요약을 완료했습니다.", '
+        '"is_success": true, '
+        '"result": "1. AI 반도체 수출 호조\\n2. 기준금리 동결\\n3. 가을 날씨 지속"}'
+    )
+
+    async def mock_stream_json_ok(*args, **kwargs):
+        yield {"type": "content", "token": json_resp}
+        yield {"type": "done", "message": {"content": json_resp}}
+
+    with patch("app.services.ollama_client.ollama_client.stream_chat", side_effect=mock_stream_json_ok):
+        res = await agent.run(mock_context)
+
+    assert res.success is True
+    assert res.output == "1. AI 반도체 수출 호조\n2. 기준금리 동결\n3. 가을 날씨 지속"
+    assert mock_context.variables["agent_result"] == "1. AI 반도체 수출 호조\n2. 기준금리 동결\n3. 가을 날씨 지속"
+
+    thinking_events = [c for c in mock_context.emit_event.call_args_list if c.kwargs.get("event_type") == "AGENT_THINKING"]
+    assert any("브라우저에서 주요 뉴스 3건을 확인하고 요약을 완료했습니다." in c.kwargs.get("content", "") for c in thinking_events)
+
+
+@pytest.mark.asyncio
+async def test_agent_node_json_decision_failure_aborts(mock_context):
+    """
+    [TO-BE 핵심 검증 3]
+    에이전트가 최종 응답에서 "is_success": false로 판단한 경우,
+    에러/익셉션이 발생하지 않았더라도 에이전트 노드를 실패(NodeResult(success=False))로 처리하는지 검증.
+    """
+    config = {
+        "model": "qwen3.8:27b",
+        "prompt": "브라우저를 열고 뉴스를 확인해줘",
+        "max_steps": 5,
+        "output_variable": "agent_result"
+    }
+    agent = AgentNode("agent_json_fail", "JSON 실패 에이전트", config)
+
+    json_fail_resp = (
+        '```json\n'
+        '{\n'
+        '  "thought": "열려 있는 브라우저 창을 찾을 수 없으며 프로그램을 새로 실행할 수 있는 도구가 없습니다.",\n'
+        '  "is_success": false,\n'
+        '  "result": "브라우저 창이 열려 있지 않아 뉴스 확인 작업을 수행할 수 없습니다."\n'
+        '}\n'
+        '```'
+    )
+
+    async def mock_stream_json_fail(*args, **kwargs):
+        yield {"type": "content", "token": json_fail_resp}
+        yield {"type": "done", "message": {"content": json_fail_resp}}
+
+    with patch("app.services.ollama_client.ollama_client.stream_chat", side_effect=mock_stream_json_fail):
+        res = await agent.run(mock_context)
+
+    assert res.success is False
+    assert "브라우저 창이 열려 있지 않아" in res.error
+    assert "agent_result" not in mock_context.variables
+
+    error_events = [c for c in mock_context.emit_event.call_args_list if c.kwargs.get("event_type") == "ERROR"]
+    assert len(error_events) == 1
+    assert "브라우저 창이 열려 있지 않아" in error_events[0].kwargs.get("content", "")
+
+
+@pytest.mark.asyncio
+async def test_agent_node_incomplete_planning_text_without_tool_call(mock_context):
+    """
+    [TO-BE 핵심 검증 4]
+    에이전트가 도구 호출 없이 '다른 브라우저 창이 있는지 확인해 보겠습니다.'처럼
+    미완료 계획만 텍스트로 출력한 경우, 성공으로 오인하지 않고 재시도 유도 후 미완료 시 실패 처리하는지 검증.
+    """
+    config = {
+        "model": "qwen3.8:27b",
+        "prompt": "브라우저를 열고 뉴스 확인해줘",
+        "max_steps": 2,
+        "output_variable": "agent_result"
+    }
+    agent = AgentNode("agent_incomplete", "미완료 계획 에이전트", config)
+
+    call_count = 0
+    async def mock_incomplete_stream(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        # 도구 호출 없이 계속 계획만 말함
+        msg_text = "Chrome 창이 없네요. 다른 브라우저 창이 있는지 확인해 보겠습니다."
+        yield {"type": "content", "token": msg_text}
+        yield {"type": "done", "message": {"content": msg_text, "tool_calls": []}}
+
+    with patch("app.services.ollama_client.ollama_client.stream_chat", side_effect=mock_incomplete_stream):
+        res = await agent.run(mock_context)
+
+    # Step 1에서 재시도 유도 후 Step 2에서도 미완료 계획으로 끝났으므로 실패 처리되어야 함
+    assert call_count == 2
+    assert res.success is False
+    assert "agent_result" not in mock_context.variables
+
+
+@pytest.mark.asyncio
+async def test_agent_node_custom_system_prompt_with_api_schema_verdict_failure(mock_context):
+    """
+    [TO-BE 핵심 검증 5]
+    사용자가 시스템 프롬프트를 임의로 변경하여 모델이 JSON이 아닌 일반 평문으로 응답하더라도,
+    Ollama API 레벨의 format(AGENT_VERDICT_JSON_SCHEMA) 구조화 검증기가 동작하여
+    실패 상태(is_success=False)를 정확히 차단하는지 검증.
+    """
+    from app.nodes.agent import DEFAULT_AGENT_SYSTEM_PROMPT, AGENT_VERDICT_JSON_SCHEMA
+
+    # 기본 시스템 프롬프트에 JSON 강제 문구가 없음을 검증
+    assert "JSON" not in DEFAULT_AGENT_SYSTEM_PROMPT
+
+    config = {
+        "model": "qwen3.8:27b",
+        "prompt": "사내 메신저를 열어 공지사항을 확인해줘",
+        "system_prompt": "너는 조선시대 선비야. 반드시 평문 하오체로만 짧게 답변하시오.",
+        "max_steps": 3,
+        "output_variable": "agent_result",
+    }
+    agent = AgentNode("agent_custom_sys_fail", "커스텀 프롬프트 실패 검증", config)
+
+    async def mock_stream_plain(*args, **kwargs):
+        # 커스텀 시스템 프롬프트에 따라 JSON 없이 하오체 평문으로만 답변
+        msg_text = "사내 메신저 창이 보이지 않아 공지사항을 열람하지 못하였소."
+        yield {"type": "content", "token": msg_text}
+        yield {"type": "done", "message": {"content": msg_text, "tool_calls": []}}
+
+    captured_chat_kwargs = {}
+
+    async def mock_schema_verdict_chat(*args, **kwargs):
+        nonlocal captured_chat_kwargs
+        captured_chat_kwargs = kwargs
+        return {
+            "role": "assistant",
+            "content": (
+                '{"thought": "사내 메신저를 열지 못해 공지사항 확인 목표를 달성하지 못함", '
+                '"is_complete": true, '
+                '"is_success": false, '
+                '"reason": "사내 메신저 창이 보이지 않아 공지사항을 열람하지 못하였소."}'
+            ),
+        }
+
+    with patch("app.services.ollama_client.ollama_client.stream_chat", side_effect=mock_stream_plain), \
+         patch("app.services.ollama_client.ollama_client.chat", new=AsyncMock(side_effect=mock_schema_verdict_chat)):
+        res = await agent.run(mock_context)
+
+    # 1. API 레벨 format 파라미터에 AGENT_VERDICT_JSON_SCHEMA가 전달되었는지 검증
+    assert captured_chat_kwargs.get("format") == AGENT_VERDICT_JSON_SCHEMA
+    # 2. 시스템 프롬프트를 변경했더라도 최종 실패(False)로 정확히 판정되어야 함
+    assert res.success is False
+    assert "사내 메신저 창이 보이지 않아" in res.error
+    assert "agent_result" not in mock_context.variables
+
+
+@pytest.mark.asyncio
+async def test_agent_node_custom_system_prompt_with_api_schema_verdict_incomplete_then_success(mock_context):
+    """
+    [TO-BE 핵심 검증 6]
+    사용자가 시스템 프롬프트를 수정한 상태에서 모델이 미완료 평문 응답을 반환했을 때,
+    Ollama API format(AGENT_VERDICT_JSON_SCHEMA) 검증기가 is_complete=False를 감지하여
+    다음 루프 재시도를 유도하고 최종 성공 시 깔끔한 평문 결과가 저장되는지 검증.
+    """
+    config = {
+        "model": "qwen3.8:27b",
+        "prompt": "현재 열린 메모장에 완료라고 입력해줘",
+        "system_prompt": "마크다운이나 JSON 없이 한 줄 평문으로만 대답하세요.",
+        "max_steps": 3,
+        "output_variable": "agent_result",
+    }
+    agent = AgentNode("agent_custom_sys_retry", "커스텀 프롬프트 재시도 검증", config)
+
+    stream_step = 0
+
+    async def mock_stream(*args, **kwargs):
+        nonlocal stream_step
+        stream_step += 1
+        if stream_step == 1:
+            # 1스텝: 도구 호출 없이 애매한 중간 상태 평문 출력
+            text = "메모장 창 위치를 먼저 파악하는 중입니다."
+            yield {"type": "content", "token": text}
+            yield {"type": "done", "message": {"content": text, "tool_calls": []}}
+        elif stream_step == 2:
+            # 2스텝: 재유도 받은 후 실제 도구 호출 수행
+            yield {
+                "type": "done",
+                "message": {
+                    "content": "",
+                    "tool_calls": [{"function": {"name": "keyboard_type", "arguments": {"text": "완료"}}}],
+                },
+            }
+        else:
+            # 3스텝: 최종 완료 평문 응답
+            text = "메모장에 완료 텍스트 입력을 마쳤습니다."
+            yield {"type": "content", "token": text}
+            yield {"type": "done", "message": {"content": text, "tool_calls": []}}
+
+    verdict_call = 0
+
+    async def mock_verdict_chat(*args, **kwargs):
+        nonlocal verdict_call
+        verdict_call += 1
+        if verdict_call == 1:
+            # 1스텝 응답에 대해 미완료(is_complete=False) 판정
+            return {
+                "role": "assistant",
+                "content": (
+                    '{"thought": "아직 메모장에 텍스트를 입력하지 않고 파악 중이라고만 답함", '
+                    '"is_complete": false, "is_success": false, "reason": "다음 단계 도구 호출 필요"}'
+                ),
+            }
+        return {
+            "role": "assistant",
+            "content": (
+                '{"thought": "keyboard_type 도구로 입력 완료 후 최종 보고함", '
+                '"is_complete": true, "is_success": true, "reason": "목표 달성 완료"}'
+            ),
+        }
+
+    with patch("app.services.ollama_client.ollama_client.stream_chat", side_effect=mock_stream), \
+         patch("app.services.ollama_client.ollama_client.chat", new=AsyncMock(side_effect=mock_verdict_chat)), \
+         patch("app.nodes.agent.execute_agent_tool", return_value="[성공] '완료' 입력 완료"):
+        res = await agent.run(mock_context)
+
+    assert res.success is True
+    assert stream_step == 3
+    assert verdict_call == 2
+    assert res.output == "메모장에 완료 텍스트 입력을 마쳤습니다."
+    assert mock_context.variables["agent_result"] == "메모장에 완료 텍스트 입력을 마쳤습니다."
+
+
+
+
 

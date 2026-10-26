@@ -436,7 +436,8 @@ export const ko = {
       goalPlaceholder: '에이전트가 완수할 구체적인 작업 목표를 지시하세요. 예: "메모장을 켜고 인사말을 입력해줘"',
       includeScreenLabel: '실행 시점 PC 화면 스크린샷 포함 (Vision/멀티모달 모델 권장)',
       systemPromptLabel: '시스템 프롬프트 (선택)',
-      systemPromptPlaceholder: '당신은 데스크톱 자동화 전문 AI 에이전트입니다. 주어진 도구(스킬)를 활용하여 작업을 수행하며, 필요한 작업을 마치거나 정보를 획득하면 도구 호출을 종료하고 최종 결과를 사용자에게 한국어로 명확하고 친절하게 설명해야 합니다.',
+      systemPromptPlaceholder:
+        '당신은 데스크톱 자동화 전문 AI 에이전트입니다. 주어진 도구(스킬)를 활용하여 사용자의 지시 목표를 완수하세요.',
       systemPromptHelp: '미입력 시 상기 기본 시스템 프롬프트가 자동으로 적용됩니다.',
       skillModeLabel: '에이전트 사용 가능 스킬셋',
       skillPresetAll: '기본 RPA 스킬 전체',

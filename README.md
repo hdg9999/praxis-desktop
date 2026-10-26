@@ -34,6 +34,7 @@ Praxis Desktop은 모든 것을 블랙박스 AI에 전적으로 위임하는 것
 
 4. **철저한 안전 장치 (Safety Guardrails)**
    - **4중 프로세스 안전 가드레일**: OS 핵심 시스템 및 Praxis Desktop 런타임 종료 원천 차단
+   - **에이전트 노드 3중 검증 가드레일 (Circuit Breaker)**: 최대 루프(`max_steps`) 초과 시 엄격한 실패(`ERROR`) 처리, 도구 호출 누락 감지 및 자가 교정, 시스템 프롬프트 비의존 Ollama API `format`(JSON Schema) 기반 작업 완료/성공 구조화 검증으로 후속 노드 오작동 원천 차단
    - **비상 탈출 킬 스위치 (Kill-Switch)**: 전역 핫키 **`F12`** 감지 시 즉시 모든 백그라운드 스레드 및 제어 강제 중단
    - **로컬 퍼스트(Local-first) 아키텍처**: 외부 클라우드 통신 없는 100% 로컬 데이터 주권(SQLite + 로컬 Ollama)
 

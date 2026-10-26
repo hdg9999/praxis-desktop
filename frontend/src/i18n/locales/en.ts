@@ -438,7 +438,8 @@ export const en: TranslationType = {
       goalPlaceholder: 'Specify the objective for the agent. e.g. "Open Notepad and type a greetings message"',
       includeScreenLabel: 'Include PC screen screenshot at runtime (Recommended for Vision models)',
       systemPromptLabel: 'System Prompt (Optional)',
-      systemPromptPlaceholder: 'You are an expert desktop automation AI agent. Use the provided tools to perform tasks, and once finished or relevant information is gathered, stop tool calls and provide a clear, helpful final response to the user.',
+      systemPromptPlaceholder:
+        'You are an expert desktop automation AI agent. Use the provided tools to fulfill the user\'s goal.',
       systemPromptHelp: 'When left blank, the above default system instructions are automatically applied.',
       skillModeLabel: 'Available Skills',
       skillPresetAll: 'All Standard RPA Skills',

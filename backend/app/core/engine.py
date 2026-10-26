@@ -622,6 +622,7 @@ class FlowEngine:
 
         # 이벤트 브로드캐스트 & DB 기록 래퍼 콜백
         msg_idx = 0
+        error_emitted_node_ids = set()
         async def internal_event_callback(event_payload: Dict[str, Any]):
             nonlocal msg_idx
             msg_idx += 1
@@ -629,6 +630,8 @@ class FlowEngine:
 
             # DB에 메시지 영구 저장 (스트리밍 청크는 너무 빈번하므로 제외하고 영구 저장)
             event_type = event_payload.get("event_type", "")
+            if event_type == "ERROR" and event_payload.get("node_id"):
+                error_emitted_node_ids.add(event_payload.get("node_id"))
             if event_type in ["START", "SUCCESS", "ERROR", "AGENT_TOOL_CALL", "AGENT_TOOL_RESULT", "AGENT_THINKING", "AGENT_STEP_START"]:
                 with Session(engine) as db:
                     msg_record = ExecutionMessage(
@@ -728,13 +731,15 @@ class FlowEngine:
                         overall_status = "FAILED"
                         err_msg = getattr(result, "error", None) or "노드 실행에 실패했습니다."
                         last_error_msg = err_msg
-                        await internal_event_callback({
-                            "node_id": node_data.get("id", ""),
-                            "node_name": node_data.get("data", {}).get("label", node_instance.name),
-                            "node_type": getattr(node_instance, "node_type", "GENERAL"),
-                            "event_type": "ERROR",
-                            "content": f"❌ {err_msg}"
-                        })
+                        nid = node_data.get("id", "")
+                        if nid not in error_emitted_node_ids:
+                            await internal_event_callback({
+                                "node_id": nid,
+                                "node_name": node_data.get("data", {}).get("label", node_instance.name),
+                                "node_type": getattr(node_instance, "node_type", "GENERAL"),
+                                "event_type": "ERROR",
+                                "content": f"❌ {err_msg}"
+                            })
                         break
 
         except Exception as e:

@@ -97,11 +97,12 @@ class OllamaClient:
         tools: Optional[List[Dict[str, Any]]] = None,
         temperature: float = 0.3,
         num_ctx: int = 8192,
-        stream: bool = False
+        stream: bool = False,
+        format: Optional[Any] = None
     ) -> Dict[str, Any]:
         """
         Ollama /api/chat 비스트리밍 호출.
-        Tool Calling 응답을 포함한 assistant 메시지 dict 반환:
+        Tool Calling 응답 또는 format(JSON Schema / 'json') 구조화 응답을 포함한 assistant 메시지 dict 반환:
         {'role': 'assistant', 'content': '...', 'tool_calls': [...]}
         """
         payload: Dict[str, Any] = {
@@ -115,10 +116,17 @@ class OllamaClient:
         }
         if tools:
             payload["tools"] = tools
+        if format is not None:
+            payload["format"] = format
 
         async with httpx.AsyncClient(timeout=180.0) as client:
             try:
                 res = await client.post(f"{self.base_url}/api/chat", json=payload)
+                # 구버전 Ollama에서 JSON Schema(dict) format 미지원으로 400 반환 시 'json' 문자열 모드로 1회 폴백
+                if res.status_code == 400 and isinstance(format, dict):
+                    fallback_payload = dict(payload)
+                    fallback_payload["format"] = "json"
+                    res = await client.post(f"{self.base_url}/api/chat", json=fallback_payload)
                 if res.status_code == 200:
                     data = res.json()
                     return data.get("message", {"role": "assistant", "content": ""})
