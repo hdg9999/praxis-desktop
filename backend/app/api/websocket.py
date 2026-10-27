@@ -68,7 +68,8 @@ async def trigger_run_flow(
             flow_name=flow.name,
             graph_data=graph_data,
             session_id=session_id,
-            event_callback=manager.broadcast
+            event_callback=manager.broadcast,
+            flow_description=flow.description or "",
         )
 
     # 비동기 백그라운드 태스크로 Flow 실행 시작

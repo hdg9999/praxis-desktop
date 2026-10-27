@@ -16,11 +16,21 @@ from app.nodes.general import render_template
 from app.services.ollama_client import ollama_client
 from app.services.screen_capture import screen_capture_service
 from app.core.config import settings
-from app.nodes.agent_tools import get_agent_tools_schema, execute_agent_tool
+from app.nodes.agent_tools import (
+    get_agent_tools_schema,
+    execute_agent_tool,
+    get_default_skills_for_failed_node,
+    get_self_healing_tools_schema,
+)
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_AGENT_SYSTEM_PROMPT = "당신은 데스크톱 자동화 전문 AI 에이전트입니다. 주어진 도구(스킬)를 활용하여 사용자의 지시 목표를 완수하세요."
+
+DEFAULT_SELF_HEALING_PROMPT = (
+    "워크플로우 실행 중 발생한 오류 원인을 파악하고, 제공된 도구(스킬)를 활용하여 "
+    "화면을 가로막는 팝업/장애물을 처리하거나 실패한 노드의 원래 목표 동작을 대신 수행하여 오류를 복구하세요."
+)
 
 # Ollama /api/chat Structured Outputs (format 파라미터) 전용 JSON Schema
 # 사용자의 시스템 프롬프트(system_prompt) 수정 여부와 무관하게 API 디코더(Grammar) 레벨에서
@@ -444,11 +454,15 @@ class AgentNode(BaseNode):
                 logger.error(f"[AgentNode] Failed to capture initial screenshot: {e}", exc_info=True)
 
         # 4. 스킬셋(Tool Schemas) 필터링 생성
-        tools_schema = get_agent_tools_schema(
-            skill_mode=self.skill_mode,
-            preset_name=self.preset_name,
-            custom_skills=self.custom_skills
-        )
+        override_tools = self.config.get("override_tools_schema")
+        if isinstance(override_tools, list):
+            tools_schema = override_tools
+        else:
+            tools_schema = get_agent_tools_schema(
+                skill_mode=self.skill_mode,
+                preset_name=self.preset_name,
+                custom_skills=self.custom_skills
+            )
 
         tool_names_str = ", ".join([t["function"]["name"] for t in tools_schema]) if tools_schema else "없음 (도구 비활성화)"
         logger.info(f"[AgentNode:{self.id}] Loaded {len(tools_schema)} tools: {tool_names_str}")
@@ -497,6 +511,16 @@ class AgentNode(BaseNode):
                 event_type="AGENT_STEP_START",
                 content=f"🔄 에이전트 추론 루프 #{step} 진행 중..."
             )
+
+            # 저사양 PC / 소형 LLM 보호: 멀티턴 진행 시 이전 턴의 대용량 UI/웹 스캔 결과 슬라이딩 압축 (Observation Masking)
+            if self.config.get("compact_observation_masking") and step >= 2:
+                tool_msg_indices = [i for i, m in enumerate(messages) if m.get("role") == "tool"]
+                # 가장 최근 도구 결과 2건은 원문 유지하고, 그 이전의 긴 도구 출력(>300자)은 2줄 요약으로 마스킹
+                for old_idx in tool_msg_indices[:-2]:
+                    old_content = str(messages[old_idx].get("content") or "")
+                    if len(old_content) > 300 and "[이전 스텝 대용량 출력 압축됨]" not in old_content:
+                        head_lines = "\n".join(old_content.splitlines()[:2])
+                        messages[old_idx]["content"] = f"{head_lines}\n... [이전 스텝 대용량 출력 압축됨]"
 
             # LLM 호출 및 스트리밍 처리
             assistant_content = ""
@@ -911,13 +935,14 @@ class AgentNode(BaseNode):
             final_answer = "에이전트 자동화 작업을 완료했습니다."
 
         try:
+            skip_out_var = bool(self.config.get("skip_output_variable", False))
             is_strict = getattr(context, "strict_variables", False) is True
             raw_out = self.config.get("output_variable")
             out_var = str(raw_out).strip() if raw_out is not None else ""
-            if not out_var and not is_strict:
+            if not out_var and not is_strict and not skip_out_var:
                 out_var = getattr(self, "output_variable", "agent_result") or "agent_result"
 
-            if hasattr(context, "set_variable"):
+            if not skip_out_var and hasattr(context, "set_variable"):
                 try:
                     context.set_variable(out_var, final_answer)
                 except Exception:
@@ -929,7 +954,8 @@ class AgentNode(BaseNode):
                 except Exception:
                     pass
             if hasattr(context, "variables") and isinstance(context.variables, dict):
-                context.variables[out_var] = final_answer
+                if not skip_out_var and out_var:
+                    context.variables[out_var] = final_answer
                 context.variables["last_output"] = final_answer
         except Exception as var_err:
             err_msg = f"{self.name} 출력 변수 저장 오류: {str(var_err)}"
@@ -953,3 +979,257 @@ class AgentNode(BaseNode):
         )
         logger.info(f"[AgentNode:{self.id}] Successfully completed agent run.")
         return NodeResult(success=True, output=final_answer, screenshot_url=screenshot_url)
+
+
+# ---------------------------------------------------------------------------
+# 오류 복구 AI 에이전트(Self-Healing Agent) 런타임 컨텍스트 경량화 빌더
+# ---------------------------------------------------------------------------
+_NOISY_CONFIG_KEYS = {
+    "base64_image",
+    "object_base64",
+    "image_url",
+    "object_image",
+    "note",
+    "description",
+    "note_collapsed",
+    "retry_enabled",
+    "retry_count",
+    "retry_interval",
+    "continue_on_error",
+    "group_id",
+}
+
+
+def sanitize_failed_node_digest(node_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    오류가 발생한 노드의 메타데이터에서 대용량 Base64 이미지나 렌더링 전용 필드를 제거하고,
+    노드 주석(note)을 포함한 핵심 의미론적 정보만 저용량 다이제스트로 추출합니다.
+    """
+    node_id = str(node_data.get("id") or "")
+    node_type = str(node_data.get("type") or "")
+    data = node_data.get("data", {}) or {}
+    label = str(data.get("label") or node_id)
+    cfg = data.get("config", {}) or {}
+
+    note = str(cfg.get("note") or cfg.get("description") or "").strip()
+
+    clean_params: Dict[str, Any] = {}
+    for k, v in cfg.items():
+        if k in _NOISY_CONFIG_KEYS or v is None or v == "":
+            continue
+        if k in ("object_data", "start_object_data", "end_object_data") and isinstance(v, dict):
+            obj_summary = {
+                sub_k: v.get(sub_k)
+                for sub_k in (
+                    "name",
+                    "orig_name",
+                    "control_type",
+                    "window_title",
+                    "automation_id",
+                    "executable_path",
+                    "x",
+                    "y",
+                )
+                if v.get(sub_k) not in (None, "")
+            }
+            if obj_summary:
+                clean_params[k] = obj_summary
+        elif k == "web_element_data" and isinstance(v, dict):
+            web_summary = {
+                sub_k: v.get(sub_k)
+                for sub_k in (
+                    "display_name",
+                    "tag",
+                    "text",
+                    "placeholder",
+                    "css_selector",
+                    "xpath",
+                    "in_iframe",
+                    "page_title",
+                    "page_url",
+                )
+                if v.get(sub_k) not in (None, "")
+            }
+            if web_summary:
+                clean_params[k] = web_summary
+        else:
+            s_val = str(v)
+            clean_params[k] = (s_val[:200] + "...") if len(s_val) > 200 else v
+
+    return {
+        "node_id": node_id,
+        "node_name": label,
+        "node_type": node_type,
+        "node_note": note,
+        "key_params": clean_params,
+    }
+
+
+def build_compact_session_log_digest(
+    session_logs: List[Dict[str, Any]],
+    max_recent: int = 6,
+) -> str:
+    """
+    현 세션의 Agent Runner 실행 기록(session_logs)을 소형 LLM/저사양 PC에 부담이 없도록
+    최근 핵심 이벤트 중심으로 300~400 토큰 이내로 압축 요약합니다.
+    """
+    if not session_logs:
+        return "기록된 이전 실행 로그 없음"
+
+    total = len(session_logs)
+    success_cnt = sum(1 for lg in session_logs if lg.get("event_type") == "SUCCESS")
+    error_cnt = sum(1 for lg in session_logs if lg.get("event_type") == "ERROR")
+
+    recent_slice = session_logs[-max_recent:]
+    start_idx = max(1, total - len(recent_slice) + 1)
+
+    lines = [
+        f"총 이벤트 {total}건 (성공 {success_cnt}건 / 오류 {error_cnt}건) 중 최근 {len(recent_slice)}건 요약:"
+    ]
+    for idx, lg in enumerate(recent_slice, start=start_idx):
+        ev_type = lg.get("event_type", "INFO")
+        n_name = lg.get("node_name", "")
+        content = str(lg.get("content") or "").replace("\n", " ").strip()
+        if len(content) > 140:
+            content = content[:140] + "..."
+        lines.append(f"  #{idx} [{ev_type}] ({n_name}) {content}")
+
+    if total > max_recent:
+        lines.append(
+            f"  💡 (이전 실행 기록 #{1}~#{start_idx - 1} 상세 내역이 더 필요하면 `get_session_logs` 도구를 호출하여 열람 가능)"
+        )
+    return "\n".join(lines)
+
+
+def build_self_healing_agent_node(
+    flow_name: str,
+    flow_description: str,
+    ordered_nodes: List[Dict[str, Any]],
+    failed_node_data: Dict[str, Any],
+    error_message: str,
+    retry_attempts: int,
+    session_logs: List[Dict[str, Any]],
+    handler_config: Dict[str, Any],
+    flow_settings: Dict[str, Any],
+) -> AgentNode:
+    """
+    워크플로우 전역 설정의 '오류 복구 AI 에이전트(Self-Healing Agent)' 설정과
+    런타임 오류 발생 맥락을 결합하여 즉시 실행 가능한 AgentNode 인스턴스를 생성합니다.
+    """
+    digest = sanitize_failed_node_digest(failed_node_data)
+    failed_type = digest["node_type"]
+    failed_name = digest["node_name"]
+    failed_id = digest["node_id"]
+    failed_note = digest["node_note"] or "(작성된 노드 주석 없음)"
+    params_json = (
+        json.dumps(digest["key_params"], ensure_ascii=False)
+        if digest["key_params"]
+        else "(별도 파라미터 없음)"
+    )
+
+    # 전체 워크플로우 단계 개요 및 현재 오류 발생 지점 표시
+    step_labels: List[str] = []
+    for n in ordered_nodes:
+        nt = n.get("type", "")
+        if nt in ("flow_start", "flow_end", "flow_group"):
+            continue
+        nid = n.get("id", "")
+        lbl = (n.get("data", {}) or {}).get("label", nid)
+        if nid == failed_id:
+            step_labels.append(f"🚨[{lbl}(오류발생)]")
+        else:
+            step_labels.append(lbl)
+    flow_chain_str = " ➔ ".join(step_labels[:15])
+    if len(step_labels) > 15:
+        flow_chain_str += f" ... (총 {len(step_labels)}개 스텝)"
+
+    # 런타임 로드 스킬셋 구성 (오류 발생 노드 기본 스킬 자동 포함 + 사용자 추가 허용 스킬)
+    auto_default_skills = get_default_skills_for_failed_node(failed_type)
+    skill_mode = str(handler_config.get("skill_mode") or "custom").strip()
+    preset_name = str(handler_config.get("preset_name") or "basic_interaction").strip()
+    custom_skills = handler_config.get("custom_skills")
+    if not isinstance(custom_skills, list):
+        custom_skills = []
+
+    tools_schema = get_self_healing_tools_schema(
+        failed_node_type=failed_type,
+        skill_mode=skill_mode,
+        preset_name=preset_name,
+        custom_skills=custom_skills,
+        include_session_log_tool=True,
+    )
+    loaded_tool_names = [t["function"]["name"] for t in tools_schema]
+
+    after_action = str(handler_config.get("after_agent_action") or "continue_next").strip()
+    after_action_desc = (
+        "에이전트 복구 완료 후 원래 워크플로우의 다음 노드로 이어서 실행을 계속합니다."
+        if after_action == "continue_next"
+        else "에이전트 동작(복구/후처리/분석) 완료 후 워크플로우를 종료합니다."
+    )
+
+    user_custom_prompt = str(handler_config.get("user_prompt") or "").strip()
+    effective_goal = user_custom_prompt if user_custom_prompt else DEFAULT_SELF_HEALING_PROMPT
+
+    log_digest_str = build_compact_session_log_digest(session_logs, max_recent=6)
+
+    runtime_prompt = (
+        f"[🛠️ 워크플로우 전역 오류 복구 AI 에이전트 긴급 호출]\n\n"
+        f"1. 현재 워크플로우 개요:\n"
+        f"- 워크플로우 이름: {flow_name or '이름 없음'}\n"
+        f"- 워크플로우 설명: {flow_description or '(설명 없음)'}\n"
+        f"- 전체 진행 경로: {flow_chain_str}\n\n"
+        f"2. 오류가 발생한 스킬 노드 제반 정보:\n"
+        f"- 노드 이름(ID): {failed_name} ({failed_id})\n"
+        f"- 노드 유형: {failed_type}\n"
+        f"- 노드 주석(Note/설명): {failed_note}\n"
+        f"- 노드 설정 파라미터: {params_json}\n"
+        f"- 사전 재시도 횟수: {retry_attempts}회\n"
+        f"- 발생한 오류 메시지: {error_message}\n\n"
+        f"3. 현 세션 실행 기록 요약 (Agent Runner 로그):\n"
+        f"{log_digest_str}\n\n"
+        f"4. 런타임 로드된 스킬셋:\n"
+        f"- 오류 노드 대응 자동 로드 스킬: {', '.join(auto_default_skills)}\n"
+        f"- 전체 사용 가능 스킬: {', '.join(loaded_tool_names)}\n"
+        f"- 에이전트 종료 후 예정 동작: {after_action_desc}\n\n"
+        f"5. 지시사항 (목표):\n"
+        f"{effective_goal}"
+    )
+
+    sys_prompt = (
+        "당신은 데스크톱/웹 자동화 워크플로우의 '오류 복구 전담 AI 에이전트(Self-Healing Agent)'입니다. "
+        "제공된 워크플로우 개요, 오류 발생 노드의 주석과 설정 정보, 그리고 현 세션 실행 기록을 바탕으로 "
+        "주어진 도구(스킬)를 호출하여 지시된 복구 또는 후처리 목표를 신속하고 정확하게 완수하세요."
+    )
+
+    max_steps = max(1, min(100, int(handler_config.get("max_steps", 5) or 5)))
+    include_capture = bool(handler_config.get("include_screen_capture", False))
+    model_name = str(
+        handler_config.get("model")
+        or flow_settings.get("default_llm_model")
+        or "llama3.1"
+    ).strip()
+    num_ctx = int(flow_settings.get("default_num_ctx", 8192) or 8192)
+
+    agent_cfg = {
+        "model": model_name,
+        "default_llm_model": model_name,
+        "prompt": runtime_prompt,
+        "system_prompt": sys_prompt,
+        "include_screen_capture": include_capture,
+        "skill_mode": skill_mode,
+        "preset_name": preset_name,
+        "custom_skills": custom_skills,
+        "override_tools_schema": tools_schema,
+        "max_steps": max_steps,
+        "temperature": 0.2,
+        "num_ctx": num_ctx,
+        "compact_observation_masking": True,
+        "skip_output_variable": True,
+    }
+
+    return AgentNode(
+        id=f"self_healing_{failed_id}",
+        name=f"🛠️ 오류 복구 AI 에이전트 ({failed_name})",
+        config=agent_cfg,
+    )
+

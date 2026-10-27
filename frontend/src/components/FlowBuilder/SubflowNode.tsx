@@ -122,6 +122,21 @@ const SubflowNode: React.FC<NodeProps> = ({ id, data, selected }) => {
         )}
       </div>
 
+      {(cfg.retry_enabled || cfg.continue_on_error) && (
+        <div className="flex flex-wrap items-center gap-1 mt-1.5">
+          {cfg.retry_enabled && (
+            <span className="px-1.5 py-0.2 rounded bg-amber-950/70 border border-amber-700/60 text-amber-300 text-[9px] font-mono">
+              🔄 재시도 {cfg.retry_count ?? 3}회({cfg.retry_interval ?? 2}s)
+            </span>
+          )}
+          {cfg.continue_on_error && (
+            <span className="px-1.5 py-0.2 rounded bg-teal-950/70 border border-teal-700/60 text-teal-300 text-[9px] font-medium">
+              ⏭️ 오류무시 진행
+            </span>
+          )}
+        </div>
+      )}
+
       {/* Right Output Handle (source) */}
       <Handle
         type="source"

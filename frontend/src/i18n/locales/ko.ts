@@ -563,6 +563,8 @@ export const ko = {
     defaultNumCtxHelp: '에이전트 노드 실행 시 적용될 기본 컨텍스트 윈도우 크기(토큰)입니다. (기본값: 8192, 8k~64k 권장)',
     applyModelToExistingBtn: '현재 워크플로우 내 모든 AI 노드에 일괄 적용',
     appliedCountMsg: '총 {count}개의 AI/에이전트 노드에 기본 모델이 적용되었습니다.',
+    errorHandlerTitle: '전역 오류 발생 시 처리 (Global Error Handler)',
+    errorHandlerSubtitle: '개별 노드나 그룹(Try-Catch)에서 처리되지 않은 최종 오류 발생 시 실행할 복구 전략을 선택합니다.',
     saveBtn: '전역 설정 적용',
   },
 

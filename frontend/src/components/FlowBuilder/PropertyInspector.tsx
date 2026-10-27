@@ -4675,14 +4675,19 @@ export const PropertyInspector: React.FC<PropertyInspectorProps> = ({
               <div className="border-t border-slate-800 pt-3 space-y-3">
                 <div>
                   <label className="text-[11px] text-slate-400">
-                    {isEn ? 'Max Step Loops' : '최대 반복 루프'}
+                    {isEn ? 'Max Step Loops (1~100)' : '최대 반복 루프 (1~100회)'}
                   </label>
                   <input
                     type="number"
                     min="1"
-                    max="30"
+                    max="100"
                     value={cfg.max_steps ?? 10}
-                    onChange={(e) => handleConfigChange('max_steps', Number(e.target.value))}
+                    onChange={(e) =>
+                      handleConfigChange(
+                        'max_steps',
+                        Math.max(1, Math.min(100, Number(e.target.value) || 10))
+                      )
+                    }
                     className="w-full px-2.5 py-1 text-xs bg-slate-950 border border-slate-700 rounded text-slate-200 mt-1"
                   />
                 </div>
@@ -4763,12 +4768,12 @@ export const PropertyInspector: React.FC<PropertyInspectorProps> = ({
               <div className="p-3 bg-teal-950/30 border border-teal-800/50 rounded-xl space-y-1.5">
                 <div className="flex items-center gap-1.5 text-xs font-semibold text-teal-300">
                   <FolderKanban className="w-3.5 h-3.5 text-teal-400 shrink-0" />
-                  <span>{isEn ? 'Visual Group Container' : '시각적 그룹 컨테이너 노드'}</span>
+                  <span>{isEn ? 'Group Container & Try-Catch Block' : '시각적 그룹 컨테이너 & Try-Catch 블록'}</span>
                 </div>
                 <p className="text-[11px] text-slate-400 leading-relaxed">
                   {isEn
-                    ? 'Groups related nodes visually on the canvas. Collapsing hides child nodes compactly. Purely visual—ignored by the backend engine and agent skillset.'
-                    : '연관성 있는 노드들을 시각적으로 묶어 관리하는 컨테이너입니다. 접기/펼치기로 하위 노드를 컴팩트하게 감출 수 있으며, 백엔드 실행 및 에이전트 스킬에는 아무런 영향을 주지 않습니다.'}
+                    ? 'Groups related nodes visually on the canvas and optionally acts as a Try-Catch block to skip remaining group nodes or run a Catch recovery sub-workflow when a child node fails.'
+                    : '연관된 노드들을 시각적으로 묶어 관리하며, 아래 [그룹 내 오류 발생 시 조치]를 설정하면 그룹 내부 노드 실패 시 그룹 건너뛰기(Break) 또는 Catch 서브플로우를 실행하는 Try-Catch 블록으로 동작합니다.'}
                 </p>
               </div>
 
@@ -5006,6 +5011,196 @@ export const PropertyInspector: React.FC<PropertyInspectorProps> = ({
                         ))}
                       </div>
                     )}
+                  </div>
+                );
+              })()}
+
+              {/* 그룹 노드 Try-Catch 예외처리 설정 */}
+              {(() => {
+                const rawErrorMode = cfg.error_mode;
+                const currentErrorMode: 'stop' | 'break_group' | 'catch_subflow' =
+                  rawErrorMode === 'break_group' || rawErrorMode === 'catch_subflow'
+                    ? rawErrorMode
+                    : cfg.break_on_error
+                    ? 'break_group'
+                    : cfg.catch_subflow_enabled
+                    ? 'catch_subflow'
+                    : 'stop';
+
+                const isBreakChecked = currentErrorMode === 'break_group';
+                const isCatchChecked = currentErrorMode === 'catch_subflow';
+                const catchSubflowId = (cfg.catch_subflow_id || '').trim();
+                const selectableCatchFlows = flows.filter(
+                  (f) => f.id !== activeFlowId && !f.id.startsWith('temp_')
+                );
+                const catchCycleChain =
+                  isCatchChecked && catchSubflowId
+                    ? detectSubflowCallCycle(activeFlowId, activeFlowName, catchSubflowId, flows)
+                    : null;
+
+                const handleToggleBreakGroup = () => {
+                  const nextMode = isBreakChecked ? 'stop' : 'break_group';
+                  handleMultiConfigChange({
+                    error_mode: nextMode,
+                    break_on_error: nextMode === 'break_group',
+                    catch_subflow_enabled: false,
+                  });
+                };
+
+                const handleToggleCatchSubflow = () => {
+                  const nextMode = isCatchChecked ? 'stop' : 'catch_subflow';
+                  handleMultiConfigChange({
+                    error_mode: nextMode,
+                    break_on_error: false,
+                    catch_subflow_enabled: nextMode === 'catch_subflow',
+                  });
+                };
+
+                const handleSelectCatchFlow = (nextFlowId: string) => {
+                  const found = flows.find((f) => f.id === nextFlowId);
+                  handleMultiConfigChange({
+                    catch_subflow_id: nextFlowId,
+                    catch_subflow_name: found ? found.name : '',
+                  });
+                };
+
+                return (
+                  <div className="border-t border-slate-800 pt-3.5 space-y-2.5">
+                    <div className="flex items-center justify-between gap-1">
+                      <label className="text-xs font-semibold text-amber-300 flex items-center gap-1.5">
+                        <ShieldCheck className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                        <span>
+                          {isEn
+                            ? 'Group Error Handling (Try-Catch)'
+                            : '그룹 내 오류 발생 시 조치 (Try-Catch)'}
+                        </span>
+                      </label>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 font-mono">
+                        {isBreakChecked
+                          ? isEn
+                            ? 'Break Group'
+                            : '그룹 건너뛰기'
+                          : isCatchChecked
+                          ? isEn
+                            ? 'Catch Subflow'
+                            : 'Catch 서브플로우'
+                          : isEn
+                          ? 'Stop on Error'
+                          : '즉시 중단'}
+                      </span>
+                    </div>
+
+                    <p className="text-[10px] text-slate-400 leading-relaxed">
+                      {isEn
+                        ? 'Select one recovery mode below when a child node inside this group fails (after its own retries). If neither is selected, execution stops immediately.'
+                        : '그룹 내 하위 노드가 최종 실패했을 때 적용할 모드를 1가지 선택하세요. 아무것도 선택하지 않으면 기존처럼 즉시 중단됩니다.'}
+                    </p>
+
+                    {/* 1) 그룹 건너뛰기 (Break Group) 체크박스 */}
+                    <div
+                      onClick={handleToggleBreakGroup}
+                      className={`p-2.5 rounded-xl border transition-all cursor-pointer space-y-1 ${
+                        isBreakChecked
+                          ? 'bg-amber-950/35 border-amber-600/70 text-amber-100'
+                          : 'bg-slate-950/60 border-slate-800 text-slate-300 hover:border-slate-700'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={isBreakChecked}
+                          onChange={() => {}}
+                          className="rounded bg-slate-900 border-slate-700 text-amber-500 focus:ring-0 w-3.5 h-3.5 pointer-events-none"
+                        />
+                        <span className="text-xs font-semibold">
+                          {isEn ? '1) Break Group (Skip Remaining)' : '1) 그룹 건너뛰기 (Break Group)'}
+                        </span>
+                      </div>
+                      <p className="text-[10px] text-slate-400 pl-5 leading-relaxed">
+                        {isEn
+                          ? 'Skips all remaining child nodes inside this group and safely exits to the next node outside the group.'
+                          : '그룹 내 노드의 최종 실패 시 그룹 안의 나머지 노드들을 모두 건너뛰고 그룹 바깥의 다음 노드로 안전하게 탈출합니다.'}
+                      </p>
+                    </div>
+
+                    {/* 2) Catch 서브플로우 실행 체크박스 */}
+                    <div
+                      onClick={handleToggleCatchSubflow}
+                      className={`p-2.5 rounded-xl border transition-all cursor-pointer space-y-2 ${
+                        isCatchChecked
+                          ? 'bg-cyan-950/35 border-cyan-600/70 text-cyan-100'
+                          : 'bg-slate-950/60 border-slate-800 text-slate-300 hover:border-slate-700'
+                      }`}
+                    >
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={isCatchChecked}
+                            onChange={() => {}}
+                            className="rounded bg-slate-900 border-slate-700 text-cyan-500 focus:ring-0 w-3.5 h-3.5 pointer-events-none"
+                          />
+                          <span className="text-xs font-semibold">
+                            {isEn ? '2) Run Catch Sub-Workflow' : '2) Catch 서브플로우 실행'}
+                          </span>
+                        </div>
+                        <p className="text-[10px] text-slate-400 pl-5 leading-relaxed">
+                          {isEn
+                            ? 'Invokes a recovery sub-workflow on group error, then proceeds outside the group.'
+                            : '그룹 내 에러 발생 시 복구용 서브 워크플로우를 호출한 뒤 그룹 바깥의 다음 노드로 진행합니다.'}
+                        </p>
+                      </div>
+
+                      {isCatchChecked && (
+                        <div
+                          className="pt-2 border-t border-cyan-800/50 space-y-2"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <label className="text-[11px] font-medium text-cyan-300 flex items-center gap-1">
+                            <Workflow className="w-3 h-3 text-cyan-400" />
+                            <span>
+                              {isEn ? 'Recovery (Catch) Sub-Workflow' : '호출할 복구용(Catch) 서브 워크플로우'}
+                            </span>
+                          </label>
+                          <select
+                            value={catchSubflowId}
+                            onChange={(e) => handleSelectCatchFlow(e.target.value)}
+                            className="w-full px-2.5 py-1.5 text-xs bg-slate-950 border border-cyan-700/70 rounded-lg text-slate-200 focus:outline-none focus:border-cyan-400"
+                          >
+                            <option value="">
+                              {isEn
+                                ? '-- Select Catch Sub-Workflow --'
+                                : '-- 복구용 서브 워크플로우 선택 --'}
+                            </option>
+                            {selectableCatchFlows.map((f) => (
+                              <option key={f.id} value={f.id}>
+                                {f.name}
+                              </option>
+                            ))}
+                          </select>
+
+                          {catchCycleChain && (
+                            <div className="p-2 rounded-lg bg-rose-950/70 border border-rose-700/80 text-[10px] text-rose-200 space-y-1">
+                              <div className="font-semibold text-rose-300 flex items-center gap-1">
+                                <AlertTriangle className="w-3.5 h-3.5 text-rose-400 shrink-0" />
+                                <span>
+                                  {isEn ? 'Circular Call Detected!' : '순환 호출(무한 루프) 감지!'}
+                                </span>
+                              </div>
+                              <p className="font-mono break-all text-rose-300/90">
+                                {catchCycleChain.join(' ➔ ')}
+                              </p>
+                            </div>
+                          )}
+
+                          <p className="text-[10px] text-cyan-300/80 leading-relaxed">
+                            {isEn
+                              ? '* System variables {{last_error_message}}, {{last_error_node_name}}, and current workflow variables are shared with the Catch sub-workflow.'
+                              : '* Catch 서브플로우 내부에서 {{last_error_message}}, {{last_error_node_name}} 시스템 변수 및 현재 변수값을 참조하여 복구할 수 있습니다.'}
+                          </p>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 );
               })()}
@@ -5348,6 +5543,165 @@ export const PropertyInspector: React.FC<PropertyInspectorProps> = ({
                         : '최대 중첩 호출 깊이(5단계) 및 세션당 누적 실행(500스텝) 제한'}
                     </li>
                   </ul>
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* 공통: 일반 스킬 노드 오류 발생 시 조치 (재시도 & 오류 무시 후 진행) */}
+          {!isMarker && !isGroup && (() => {
+            const retryEnabled = Boolean(cfg.retry_enabled);
+            const retryCount = Math.max(1, Math.min(20, Number(cfg.retry_count ?? 3) || 3));
+            const retryInterval = Math.max(0, Math.min(300, Number(cfg.retry_interval ?? 2.0) || 0));
+            const continueOnError = Boolean(cfg.continue_on_error);
+
+            const statusSummary =
+              retryEnabled && continueOnError
+                ? isEn
+                  ? `Retry ${retryCount}x ➔ Continue`
+                  : `재시도 ${retryCount}회 ➔ 무시 진행`
+                : retryEnabled
+                ? isEn
+                  ? `Retry ${retryCount}x (${retryInterval}s)`
+                  : `재시도 ${retryCount}회 (${retryInterval}초)`
+                : continueOnError
+                ? isEn
+                  ? 'Continue on Error'
+                  : '오류 무시 진행'
+                : isEn
+                ? 'Stop Immediately'
+                : '즉시 중단';
+
+            return (
+              <div className="border-t border-slate-800 pt-3.5 mt-3.5 space-y-2.5">
+                <div className="flex items-center justify-between gap-1">
+                  <label className="text-xs font-semibold text-amber-300 flex items-center gap-1.5">
+                    <ShieldCheck className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                    <span>{isEn ? 'On Node Error Action' : '오류 발생 시 조치'}</span>
+                  </label>
+                  <span
+                    className={`text-[10px] px-1.5 py-0.5 rounded font-mono ${
+                      retryEnabled || continueOnError
+                        ? 'bg-amber-950/70 text-amber-300 border border-amber-700/60'
+                        : 'bg-slate-800 text-slate-400'
+                    }`}
+                  >
+                    {statusSummary}
+                  </span>
+                </div>
+
+                {/* 1) 재시도 (M초 간격 N회) 체크박스 */}
+                <div
+                  className={`p-2.5 rounded-xl border transition-all space-y-2 ${
+                    retryEnabled
+                      ? 'bg-amber-950/30 border-amber-600/60 text-amber-100'
+                      : 'bg-slate-950/60 border-slate-800 text-slate-300 hover:border-slate-700'
+                  }`}
+                >
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={retryEnabled}
+                      onChange={(e) => {
+                        const checked = e.target.checked;
+                        handleMultiConfigChange({
+                          retry_enabled: checked,
+                          retry_count: cfg.retry_count ?? 3,
+                          retry_interval: cfg.retry_interval ?? 2.0,
+                        });
+                      }}
+                      className="rounded bg-slate-900 border-slate-700 text-amber-500 focus:ring-0 w-3.5 h-3.5 cursor-pointer"
+                    />
+                    <span className="text-xs font-semibold flex items-center gap-1">
+                      <RotateCcw className="w-3 h-3 text-amber-400" />
+                      <span>
+                        {isEn
+                          ? `Retry (${retryInterval}s interval, ${retryCount} times)`
+                          : `재시도 (${retryInterval}초 간격 ${retryCount}회)`}
+                      </span>
+                    </span>
+                  </label>
+
+                  {retryEnabled && (
+                    <div className="pt-2 border-t border-amber-800/40 space-y-2">
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="text-[10px] text-slate-400 block mb-1">
+                            {isEn ? 'Interval M (sec)' : '재시도 간격 M (초)'}
+                          </label>
+                          <input
+                            type="number"
+                            min="0"
+                            max="300"
+                            step="0.5"
+                            value={retryInterval}
+                            onChange={(e) =>
+                              handleConfigChange(
+                                'retry_interval',
+                                Math.max(0, Math.min(300, Number(e.target.value) || 0))
+                              )
+                            }
+                            className="w-full px-2 py-1 text-xs bg-slate-950 border border-amber-700/60 rounded text-amber-200 font-mono focus:outline-none focus:border-amber-400"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[10px] text-slate-400 block mb-1">
+                            {isEn ? 'Max Retries N (times)' : '재시도 횟수 N (회)'}
+                          </label>
+                          <input
+                            type="number"
+                            min="1"
+                            max="20"
+                            step="1"
+                            value={retryCount}
+                            onChange={(e) =>
+                              handleConfigChange(
+                                'retry_count',
+                                Math.max(1, Math.min(20, Math.round(Number(e.target.value) || 1)))
+                              )
+                            }
+                            className="w-full px-2 py-1 text-xs bg-slate-950 border border-amber-700/60 rounded text-amber-200 font-mono focus:outline-none focus:border-amber-400"
+                          />
+                        </div>
+                      </div>
+                      <p className="text-[10px] text-amber-300/80 leading-relaxed">
+                        {isEn
+                          ? `* Logs retry attempts as "(Retry 1/${retryCount})" in Agent Runner.`
+                          : `* 오류 발생 시 Agent Runner 실행 기록에 (재시도 1/${retryCount}) 형태로 몇 번째 재시도인지 기록됩니다.`}
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                {/* 2) 오류 무시 후 진행 (Continue On Error) 체크박스 */}
+                <div
+                  className={`p-2.5 rounded-xl border transition-all space-y-1 ${
+                    continueOnError
+                      ? 'bg-teal-950/30 border-teal-600/60 text-teal-100'
+                      : 'bg-slate-950/60 border-slate-800 text-slate-300 hover:border-slate-700'
+                  }`}
+                >
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={continueOnError}
+                      onChange={(e) => handleConfigChange('continue_on_error', e.target.checked)}
+                      className="rounded bg-slate-900 border-slate-700 text-teal-500 focus:ring-0 w-3.5 h-3.5 cursor-pointer"
+                    />
+                    <span className="text-xs font-semibold flex items-center gap-1">
+                      <ArrowRight className="w-3 h-3 text-teal-400" />
+                      <span>
+                        {isEn
+                          ? 'Continue On Error (Ignore & Proceed)'
+                          : '오류 무시 후 진행 (Continue On Error)'}
+                      </span>
+                    </span>
+                  </label>
+                  <p className="text-[10px] text-slate-400 pl-5 leading-relaxed">
+                    {isEn
+                      ? 'Proceeds to the next node even after final failure. If both Retry and Continue On Error are checked, Retry runs first.'
+                      : '최종 오류 발생 시에도 중단하지 않고 다음 노드로 넘어갑니다. 재시도와 함께 선택하면 재시도를 모두 수행한 뒤에도 실패할 경우 작동합니다.'}
+                  </p>
                 </div>
               </div>
             );

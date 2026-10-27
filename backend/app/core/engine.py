@@ -21,7 +21,7 @@ from app.nodes.base import (
 from app.nodes.general import GeneralNode
 from app.nodes.browser import BrowserNode
 from app.nodes.ai import AINode
-from app.nodes.agent import AgentNode
+from app.nodes.agent import AgentNode, build_self_healing_agent_node
 
 TEMPLATE_VAR_RE = re.compile(r"\{\{\s*([^}\s]+)\s*\}\}")
 
@@ -178,7 +178,7 @@ class SubflowNode(BaseNode):
             content=f"🔗 [{self.name}] 서브 워크플로우 '{target_flow_name}' 호출 시작{in_info_str}",
         )
 
-        # 7. 서브 워크플로우 실행 (독립된 변수 컨텍스트, 콜 스택 Push, 누적 스텝 카운터 공유)
+        # 7. 서브 워크플로우 실행 (독립된 변수 컨텍스트, 콜 스택 Push, 누적 스텝 카운터 및 세션 로그 공유)
         sub_flow_settings = sub_graph_data.get("settings") or context.flow_settings
         sub_context = ExecutionContext(
             session_id=context.session_id,
@@ -193,6 +193,7 @@ class SubflowNode(BaseNode):
             max_call_depth=context.max_call_depth,
             step_counter=context.step_counter,
             max_total_steps=context.max_total_steps,
+            session_logs=context.session_logs,
         )
 
         sub_success, sub_err = await self.flow_engine_ref.execute_subflow_graph(
@@ -509,6 +510,288 @@ class FlowEngine:
 
         return ordered_nodes
 
+    @staticmethod
+    def _resolve_group_error_mode(group_cfg: Dict[str, Any]) -> str:
+        """
+        그룹 노드 설정에서 Try-Catch 오류 조치 모드를 추출합니다.
+        반환값: 'break_group' | 'catch_subflow' | 'none'
+        """
+        if not isinstance(group_cfg, dict):
+            return "none"
+        explicit_mode = str(group_cfg.get("error_mode") or "").strip().lower()
+        if explicit_mode in ("break_group", "catch_subflow"):
+            return explicit_mode
+        if bool(group_cfg.get("break_group", False)):
+            return "break_group"
+        if bool(group_cfg.get("catch_subflow", False)):
+            return "catch_subflow"
+        return "none"
+
+    async def _execute_error_handler_subflow(
+        self,
+        target_flow_id: str,
+        caller_node_id: str,
+        caller_label: str,
+        parent_context: ExecutionContext,
+    ) -> Tuple[bool, Optional[str]]:
+        """
+        그룹 Catch 서브 워크플로우 또는 전역 에러 핸들러 서브 워크플로우를 실행합니다.
+        실행 전 부모 컨텍스트의 오류 관련 시스템 변수(last_error_message 등)를 서브 컨텍스트로 전달합니다.
+        """
+        clean_id = str(target_flow_id or "").strip()
+        if not clean_id:
+            err = f"[{caller_label}] 호출할 예외 처리 서브 워크플로우가 선택되지 않았습니다."
+            await parent_context.emit_event(
+                node_id=caller_node_id,
+                node_name=caller_label,
+                node_type="GENERAL",
+                event_type="ERROR",
+                content=f"❌ {err}",
+            )
+            return False, err
+
+        if clean_id in parent_context.call_stack:
+            idx = parent_context.call_stack.index(clean_id)
+            cycle_names = parent_context.call_stack_names[idx:] + [clean_id]
+            err = f"[{caller_label}] 예외 처리 서브 워크플로우 순환 호출(무한 루프)이 감지되어 차단했습니다: ({' ➔ '.join(cycle_names)})"
+            await parent_context.emit_event(
+                node_id=caller_node_id,
+                node_name=caller_label,
+                node_type="GENERAL",
+                event_type="ERROR",
+                content=f"❌ {err}",
+            )
+            return False, err
+
+        if len(parent_context.call_stack) >= parent_context.max_call_depth:
+            err = f"[{caller_label}] 서브 워크플로우 최대 호출 깊이({parent_context.max_call_depth}단계)를 초과하여 실행을 차단했습니다."
+            await parent_context.emit_event(
+                node_id=caller_node_id,
+                node_name=caller_label,
+                node_type="GENERAL",
+                event_type="ERROR",
+                content=f"❌ {err}",
+            )
+            return False, err
+
+        with Session(engine) as db:
+            target_flow = db.get(Flow, clean_id)
+
+        if not target_flow:
+            err = f"[{caller_label}] 예외 처리 대상 워크플로우(ID: '{clean_id}')를 찾을 수 없습니다."
+            await parent_context.emit_event(
+                node_id=caller_node_id,
+                node_name=caller_label,
+                node_type="GENERAL",
+                event_type="ERROR",
+                content=f"❌ {err}",
+            )
+            return False, err
+
+        target_flow_name = target_flow.name or clean_id
+        try:
+            sub_graph_data = (
+                json.loads(target_flow.graph_data)
+                if isinstance(target_flow.graph_data, str)
+                else (target_flow.graph_data or {})
+            )
+        except Exception as e:
+            err = f"[{caller_label}] 서브 워크플로우 '{target_flow_name}' 그래프 파싱 실패: {e}"
+            return False, err
+
+        sub_raw_variables = sub_graph_data.get("variables")
+        sub_strict_variables = isinstance(sub_raw_variables, list)
+        sub_variable_schemas: Dict[str, Dict[str, Any]] = {}
+        if sub_strict_variables:
+            for item in sub_raw_variables:
+                if not isinstance(item, dict):
+                    continue
+                v_name = str(item.get("name") or "").strip()
+                v_type = str(item.get("type") or "string").strip().lower()
+                v_default = item.get("defaultValue", "")
+                if not v_name:
+                    continue
+                sub_variable_schemas[v_name] = {
+                    "name": v_name,
+                    "type": v_type,
+                    "defaultValue": v_default,
+                    "description": item.get("description", ""),
+                }
+
+        # 오류 시스템 변수를 서브 컨텍스트로 그대로 승계
+        initial_sub_vars: Dict[str, Any] = {}
+        for sys_key in (
+            "last_error_message",
+            "last_error_node_id",
+            "last_error_node_name",
+            "retry_count",
+            "last_output",
+        ):
+            if sys_key in parent_context.variables:
+                initial_sub_vars[sys_key] = parent_context.variables[sys_key]
+
+        await parent_context.emit_event(
+            node_id=caller_node_id,
+            node_name=caller_label,
+            node_type="GENERAL",
+            event_type="START",
+            content=f"🛡️ [{caller_label}] 예외 처리 워크플로우 '{target_flow_name}' 호출 시작",
+        )
+
+        sub_flow_settings = sub_graph_data.get("settings") or parent_context.flow_settings
+        sub_context = ExecutionContext(
+            session_id=parent_context.session_id,
+            event_callback=parent_context.event_callback,
+            check_cancelled=parent_context.check_cancelled,
+            variables=initial_sub_vars,
+            variable_schemas=sub_variable_schemas,
+            strict_variables=sub_strict_variables,
+            flow_settings=sub_flow_settings,
+            call_stack=parent_context.call_stack + [clean_id],
+            call_stack_names=parent_context.call_stack_names + [target_flow_name],
+            max_call_depth=parent_context.max_call_depth,
+            step_counter=parent_context.step_counter,
+            max_total_steps=parent_context.max_total_steps,
+            session_logs=parent_context.session_logs,
+        )
+
+        sub_ok, sub_err = await self.execute_subflow_graph(
+            flow_name=target_flow_name,
+            graph_data=sub_graph_data,
+            sub_context=sub_context,
+        )
+        if not sub_ok:
+            fail_msg = sub_err or f"예외 처리 워크플로우 '{target_flow_name}' 실행 중 오류가 발생했습니다."
+            await parent_context.emit_event(
+                node_id=caller_node_id,
+                node_name=caller_label,
+                node_type="GENERAL",
+                event_type="ERROR",
+                content=f"❌ [{caller_label}] 예외 처리 워크플로우 '{target_flow_name}' 실패: {fail_msg}",
+            )
+            return False, fail_msg
+
+        sub_last_out = sub_context.variables.get("last_output")
+        if sub_last_out is not None:
+            parent_context.set_variable("last_output", sub_last_out, is_system=True)
+
+        await parent_context.emit_event(
+            node_id=caller_node_id,
+            node_name=caller_label,
+            node_type="GENERAL",
+            event_type="SUCCESS",
+            content=f"✅ [{caller_label}] 예외 처리 워크플로우 '{target_flow_name}' 실행 완료",
+        )
+        return True, None
+
+    async def _run_node_with_retry(
+        self,
+        node_data: Dict[str, Any],
+        flow_settings: Dict[str, Any],
+        context: ExecutionContext,
+        error_emitted_node_ids: Optional[set] = None,
+        label_prefix: str = "",
+    ) -> Tuple[NodeResult, int]:
+        """
+        단일 노드를 실행하고 실패 시 노드 속성에 설정된 재시도(M초 간격 N회) 정책을 수행합니다.
+        재시도 시 Agent Runner 타임라인에서 몇 번째 재시도인지 즉시 식별할 수 있도록
+        노드 라벨 및 이벤트 메시지에 재시도 회차를 명시하여 기록합니다.
+        반환값: (최종 NodeResult, 수행한 재시도 횟수)
+        """
+        nid = node_data.get("id", "")
+        data = node_data.get("data", {}) or {}
+        orig_label = data.get("label", nid)
+        cfg = data.get("config", {}) or {}
+        display_base_label = f"{label_prefix}{orig_label}" if label_prefix else orig_label
+
+        context.set_variable("retry_count", 0, is_system=True)
+
+        first_copy = dict(node_data)
+        first_data_copy = dict(data)
+        first_data_copy["label"] = display_base_label
+        first_copy["data"] = first_data_copy
+
+        node_instance = self.instantiate_node(first_copy, flow_settings=flow_settings)
+        result: NodeResult = await node_instance.run(context)
+
+        if (result and result.success) or context.is_cancelled():
+            return result, 0
+
+        # 1차 시도 실패 시 노드가 자체 ERROR 이벤트를 발행하지 않은 경우 발행
+        err_msg = getattr(result, "error", None) or "노드 실행에 실패했습니다."
+        if error_emitted_node_ids is not None and nid not in error_emitted_node_ids:
+            await context.emit_event(
+                node_id=nid,
+                node_name=display_base_label,
+                node_type=getattr(node_instance, "node_type", "GENERAL"),
+                event_type="ERROR",
+                content=f"❌ {err_msg}",
+            )
+
+        retry_enabled = bool(cfg.get("retry_enabled", False))
+        try:
+            retry_count = max(0, min(20, int(cfg.get("retry_count", 3) or 0))) if retry_enabled else 0
+        except (ValueError, TypeError):
+            retry_count = 3 if retry_enabled else 0
+
+        try:
+            retry_interval = max(0.0, min(60.0, float(cfg.get("retry_interval", 1.0) or 0.0)))
+        except (ValueError, TypeError):
+            retry_interval = 1.0
+
+        attempts_done = 0
+        for attempt in range(1, retry_count + 1):
+            if context.is_cancelled():
+                break
+
+            attempts_done = attempt
+            context.set_variable("retry_count", attempt, is_system=True)
+            retry_label = f"{display_base_label} (재시도 {attempt}/{retry_count})"
+
+            await context.emit_event(
+                node_id=nid,
+                node_name=retry_label,
+                node_type=getattr(node_instance, "node_type", "GENERAL"),
+                event_type="START",
+                content=(
+                    f"🔄 [{display_base_label}] 오류 발생 — {retry_interval}초 대기 후 "
+                    f"재시도합니다 ({attempt}/{retry_count}회차)"
+                ),
+            )
+
+            if retry_interval > 0:
+                await self._sleep_interruptible(retry_interval, context.is_cancelled)
+                if context.is_cancelled():
+                    break
+
+            context.increment_and_check_step_limit()
+
+            if error_emitted_node_ids is not None:
+                error_emitted_node_ids.discard(nid)
+
+            retry_copy = dict(node_data)
+            retry_data_copy = dict(data)
+            retry_data_copy["label"] = retry_label
+            retry_copy["data"] = retry_data_copy
+
+            retry_instance = self.instantiate_node(retry_copy, flow_settings=flow_settings)
+            result = await retry_instance.run(context)
+
+            if result and result.success:
+                return result, attempts_done
+
+            err_msg = getattr(result, "error", None) or "노드 재시도 실행에 실패했습니다."
+            if error_emitted_node_ids is not None and nid not in error_emitted_node_ids:
+                await context.emit_event(
+                    node_id=nid,
+                    node_name=retry_label,
+                    node_type=getattr(retry_instance, "node_type", "GENERAL"),
+                    event_type="ERROR",
+                    content=f"❌ {err_msg}",
+                )
+
+        return result, attempts_done
+
     async def execute_subflow_graph(
         self,
         flow_name: str,
@@ -529,6 +812,10 @@ class FlowEngine:
             execution_delay = 0.3
 
         ordered_nodes = self.get_execution_order(nodes_data, edges_data)
+        group_map = {
+            n["id"]: n for n in nodes_data if n.get("type") == "flow_group" and n.get("id")
+        }
+        skipped_group_ids = set()
 
         if sub_context.strict_variables:
             validation_err = self.validate_flow_variables(ordered_nodes, sub_context.variable_schemas)
@@ -544,6 +831,15 @@ class FlowEngine:
             if node_type in ("flow_start", "flow_end", "flow_group"):
                 continue
 
+            nid = node_data.get("id", "")
+            n_data = node_data.get("data", {}) or {}
+            orig_label = n_data.get("label", nid)
+            cfg = n_data.get("config", {}) or {}
+            group_id = str(cfg.get("group_id") or "").strip()
+
+            if group_id and group_id in skipped_group_ids:
+                continue
+
             # 방어선 3: 세션당 총 누적 노드 실행 스텝 제한 확인
             try:
                 sub_context.increment_and_check_step_limit()
@@ -555,18 +851,71 @@ class FlowEngine:
                 if sub_context.is_cancelled():
                     return False, f"[서브 워크플로우: {flow_name}] 실행이 사용자에 의해 취소되었습니다."
 
-            # 서브 워크플로우 내부 노드 실행 시 타임라인에서 식별하기 쉽도록 라벨에 서브플로우 접두사 표기 가능
-            sub_node_copy = dict(node_data)
-            sub_data_copy = dict(node_data.get("data", {}) or {})
-            orig_label = sub_data_copy.get("label", node_data.get("id", ""))
-            sub_data_copy["label"] = f"[{flow_name}] {orig_label}"
-            sub_node_copy["data"] = sub_data_copy
-
-            node_instance = self.instantiate_node(sub_node_copy, flow_settings=flow_settings)
-            result: NodeResult = await node_instance.run(sub_context)
+            result, _ = await self._run_node_with_retry(
+                node_data=node_data,
+                flow_settings=flow_settings,
+                context=sub_context,
+                error_emitted_node_ids=None,
+                label_prefix=f"[{flow_name}] ",
+            )
 
             if not result or not result.success:
+                if sub_context.is_cancelled():
+                    return False, f"[서브 워크플로우: {flow_name}] 실행이 사용자에 의해 취소되었습니다."
+
                 err_msg = getattr(result, "error", None) or f"서브 워크플로우 '{flow_name}'의 노드 '{orig_label}' 실행에 실패했습니다."
+                sub_context.set_variable("last_error_message", err_msg, is_system=True)
+                sub_context.set_variable("last_error_node_id", nid, is_system=True)
+                sub_context.set_variable("last_error_node_name", orig_label, is_system=True)
+
+                # 1) 개별 노드 오류 무시 후 진행 (Continue On Error)
+                if bool(cfg.get("continue_on_error", False)):
+                    await sub_context.emit_event(
+                        node_id=nid,
+                        node_name=f"[{flow_name}] {orig_label}",
+                        node_type="GENERAL",
+                        event_type="SUCCESS",
+                        content=(
+                            f"⏭️ [[{flow_name}] {orig_label}] 최종 오류가 발생했으나 "
+                            f"'오류 무시 후 진행(Continue On Error)' 설정에 따라 다음 노드로 진행합니다. (사유: {err_msg})"
+                        ),
+                    )
+                    continue
+
+                # 2) 그룹 노드 Try-Catch (Break Group / Catch Subflow)
+                if group_id and group_id in group_map:
+                    g_node = group_map[group_id]
+                    g_data = g_node.get("data", {}) or {}
+                    g_label = g_data.get("label", group_id)
+                    g_cfg = g_data.get("config", {}) or {}
+                    g_mode = self._resolve_group_error_mode(g_cfg)
+
+                    if g_mode == "break_group":
+                        skipped_group_ids.add(group_id)
+                        await sub_context.emit_event(
+                            node_id=group_id,
+                            node_name=f"[{flow_name} 그룹] {g_label}",
+                            node_type="GENERAL",
+                            event_type="START",
+                            content=(
+                                f"⏭️ [{g_label}] 하위 노드 '{orig_label}' 오류 발생 — "
+                                f"'그룹 건너뛰기(Break Group)'가 작동하여 그룹 내 나머지 노드를 건너뛰고 다음 노드로 이동합니다."
+                            ),
+                        )
+                        continue
+                    elif g_mode == "catch_subflow":
+                        skipped_group_ids.add(group_id)
+                        catch_flow_id = str(g_cfg.get("catch_subflow_id") or "").strip()
+                        c_ok, c_err = await self._execute_error_handler_subflow(
+                            target_flow_id=catch_flow_id,
+                            caller_node_id=group_id,
+                            caller_label=f"그룹 Catch: {g_label}",
+                            parent_context=sub_context,
+                        )
+                        if c_ok:
+                            continue
+                        err_msg = c_err or err_msg
+
                 return False, err_msg
 
         return True, None
@@ -589,7 +938,8 @@ class FlowEngine:
         flow_name: str,
         graph_data: Dict[str, Any],
         session_id: str,
-        event_callback: Callable[[Dict[str, Any]], Awaitable[None]]
+        event_callback: Callable[[Dict[str, Any]], Awaitable[None]],
+        flow_description: str = "",
     ) -> ExecutionSession:
         """단일 Flow 실행 및 실시간 DB 기록"""
         kill_switch.reset()
@@ -599,6 +949,7 @@ class FlowEngine:
         edges_data = graph_data.get("edges", [])
         flow_settings = graph_data.get("settings") or {}
         raw_variables = graph_data.get("variables")
+        resolved_flow_desc = str(flow_description or graph_data.get("description") or "").strip()
 
         # 워크플로우 실행 속도 (각 스킬 노드 실행 직전 고정 딜레이, 기본값 0.3초)
         try:
@@ -607,9 +958,18 @@ class FlowEngine:
             execution_delay = 0.3
 
         ordered_nodes = self.get_execution_order(nodes_data, edges_data)
+        group_map = {
+            n["id"]: n for n in nodes_data if n.get("type") == "flow_group" and n.get("id")
+        }
+        skipped_group_ids = set()
 
-        # 1. DB에 ExecutionSession 생성
+        # 1. DB에 ExecutionSession 생성 및 설명 보완
         with Session(engine) as db:
+            if not resolved_flow_desc and flow_id:
+                flow_obj = db.get(Flow, flow_id)
+                if flow_obj and flow_obj.description:
+                    resolved_flow_desc = flow_obj.description
+
             session_record = ExecutionSession(
                 id=session_id,
                 flow_id=flow_id,
@@ -623,6 +983,8 @@ class FlowEngine:
         # 이벤트 브로드캐스트 & DB 기록 래퍼 콜백
         msg_idx = 0
         error_emitted_node_ids = set()
+        session_logs: List[Dict[str, Any]] = []
+
         async def internal_event_callback(event_payload: Dict[str, Any]):
             nonlocal msg_idx
             msg_idx += 1
@@ -633,6 +995,13 @@ class FlowEngine:
             if event_type == "ERROR" and event_payload.get("node_id"):
                 error_emitted_node_ids.add(event_payload.get("node_id"))
             if event_type in ["START", "SUCCESS", "ERROR", "AGENT_TOOL_CALL", "AGENT_TOOL_RESULT", "AGENT_THINKING", "AGENT_STEP_START"]:
+                session_logs.append({
+                    "node_id": event_payload.get("node_id", ""),
+                    "node_name": event_payload.get("node_name", ""),
+                    "node_type": event_payload.get("node_type", "GENERAL"),
+                    "event_type": event_type,
+                    "content": event_payload.get("content", ""),
+                })
                 with Session(engine) as db:
                     msg_record = ExecutionMessage(
                         id=msg_id,
@@ -707,6 +1076,7 @@ class FlowEngine:
                     max_call_depth=max_call_depth,
                     step_counter={"count": 0},
                     max_total_steps=max_total_steps,
+                    session_logs=session_logs,
                 )
 
                 for node_data in ordered_nodes:
@@ -714,32 +1084,171 @@ class FlowEngine:
                         overall_status = "CANCELLED"
                         break
 
-                    # 각 스킬 노드 실행 직전 고정 딜레이 적용 (시작/끝/그룹 마커 노드는 제외)
                     node_type = node_data.get("type", "")
-                    if node_type not in ("flow_start", "flow_end", "flow_group"):
-                        context.increment_and_check_step_limit()
-                        if execution_delay > 0:
-                            await self._sleep_interruptible(execution_delay, context.is_cancelled)
-                            if context.is_cancelled():
-                                overall_status = "CANCELLED"
-                                break
+                    if node_type in ("flow_start", "flow_end", "flow_group"):
+                        continue
 
-                    node_instance = self.instantiate_node(node_data, flow_settings=flow_settings)
-                    result: NodeResult = await node_instance.run(context)
+                    nid = node_data.get("id", "")
+                    n_data = node_data.get("data", {}) or {}
+                    orig_label = n_data.get("label", nid)
+                    cfg = n_data.get("config", {}) or {}
+                    group_id = str(cfg.get("group_id") or "").strip()
+
+                    # 그룹 건너뛰기(Break Group) 또는 Catch 서브플로우 처리로 인해 탈출한 그룹의 잔여 노드는 건너뜀
+                    if group_id and group_id in skipped_group_ids:
+                        continue
+
+                    # 각 스킬 노드 실행 직전 고정 딜레이 적용
+                    context.increment_and_check_step_limit()
+                    if execution_delay > 0:
+                        await self._sleep_interruptible(execution_delay, context.is_cancelled)
+                        if context.is_cancelled():
+                            overall_status = "CANCELLED"
+                            break
+
+                    result, retry_attempts = await self._run_node_with_retry(
+                        node_data=node_data,
+                        flow_settings=flow_settings,
+                        context=context,
+                        error_emitted_node_ids=error_emitted_node_ids,
+                        label_prefix="",
+                    )
 
                     if not result or not result.success:
-                        overall_status = "FAILED"
+                        if context.is_cancelled():
+                            overall_status = "CANCELLED"
+                            break
+
                         err_msg = getattr(result, "error", None) or "노드 실행에 실패했습니다."
-                        last_error_msg = err_msg
-                        nid = node_data.get("id", "")
-                        if nid not in error_emitted_node_ids:
+                        context.set_variable("last_error_message", err_msg, is_system=True)
+                        context.set_variable("last_error_node_id", nid, is_system=True)
+                        context.set_variable("last_error_node_name", orig_label, is_system=True)
+
+                        # -----------------------------------------------------------
+                        # [1단계] 개별 노드 '오류 무시 후 진행 (Continue On Error)'
+                        # -----------------------------------------------------------
+                        if bool(cfg.get("continue_on_error", False)):
                             await internal_event_callback({
                                 "node_id": nid,
-                                "node_name": node_data.get("data", {}).get("label", node_instance.name),
-                                "node_type": getattr(node_instance, "node_type", "GENERAL"),
-                                "event_type": "ERROR",
-                                "content": f"❌ {err_msg}"
+                                "node_name": orig_label,
+                                "node_type": "GENERAL",
+                                "event_type": "SUCCESS",
+                                "content": (
+                                    f"⏭️ [{orig_label}] 최종 오류가 발생했으나 "
+                                    f"'오류 무시 후 진행(Continue On Error)' 설정에 따라 다음 노드로 진행합니다. (사유: {err_msg})"
+                                ),
                             })
+                            continue
+
+                        # -----------------------------------------------------------
+                        # [2단계] 소속 그룹 노드 Try-Catch ('그룹 건너뛰기' / 'Catch 서브플로우 실행')
+                        # -----------------------------------------------------------
+                        if group_id and group_id in group_map:
+                            g_node = group_map[group_id]
+                            g_data = g_node.get("data", {}) or {}
+                            g_label = g_data.get("label", group_id)
+                            g_cfg = g_data.get("config", {}) or {}
+                            g_mode = self._resolve_group_error_mode(g_cfg)
+
+                            if g_mode == "break_group":
+                                skipped_group_ids.add(group_id)
+                                await internal_event_callback({
+                                    "node_id": group_id,
+                                    "node_name": f"[그룹] {g_label}",
+                                    "node_type": "GENERAL",
+                                    "event_type": "START",
+                                    "content": (
+                                        f"⏭️ [{g_label}] 하위 노드 '{orig_label}' 오류 발생 — "
+                                        f"'그룹 건너뛰기(Break Group)'가 작동하여 그룹 내 나머지 노드를 모두 건너뛰고 그룹 다음 단계로 이동합니다."
+                                    ),
+                                })
+                                continue
+                            elif g_mode == "catch_subflow":
+                                skipped_group_ids.add(group_id)
+                                catch_flow_id = str(g_cfg.get("catch_subflow_id") or "").strip()
+                                c_ok, c_err = await self._execute_error_handler_subflow(
+                                    target_flow_id=catch_flow_id,
+                                    caller_node_id=group_id,
+                                    caller_label=f"그룹 Catch: {g_label}",
+                                    parent_context=context,
+                                )
+                                if c_ok:
+                                    continue
+                                err_msg = c_err or err_msg
+
+                        # -----------------------------------------------------------
+                        # [3단계] 워크플로우 전역 에러 핸들러 ('워크플로우 실행' / '오류 복구 AI 에이전트 호출')
+                        # -----------------------------------------------------------
+                        global_handler = (
+                            flow_settings.get("global_error_handler")
+                            or flow_settings.get("error_handler")
+                        )
+                        if not isinstance(global_handler, dict):
+                            global_handler = {}
+                        g_handler_mode = str(global_handler.get("mode") or "none").strip().lower()
+
+                        if g_handler_mode == "subflow":
+                            err_subflow_id = str(global_handler.get("error_subflow_id") or "").strip()
+                            await self._execute_error_handler_subflow(
+                                target_flow_id=err_subflow_id,
+                                caller_node_id=nid,
+                                caller_label="전역 오류 처리 워크플로우",
+                                parent_context=context,
+                            )
+                            overall_status = "FAILED"
+                            last_error_msg = err_msg
+                            break
+
+                        elif g_handler_mode == "self_healing_agent":
+                            healing_agent = build_self_healing_agent_node(
+                                flow_name=flow_name,
+                                flow_description=resolved_flow_desc,
+                                ordered_nodes=ordered_nodes,
+                                failed_node_data=node_data,
+                                error_message=err_msg,
+                                retry_attempts=retry_attempts,
+                                session_logs=list(session_logs),
+                                handler_config=global_handler,
+                                flow_settings=flow_settings,
+                            )
+                            after_action = str(global_handler.get("after_agent_action") or "continue_next").strip().lower()
+                            agent_res = await healing_agent.run(context)
+
+                            if agent_res and agent_res.success:
+                                if after_action == "continue_next":
+                                    await internal_event_callback({
+                                        "node_id": healing_agent.id,
+                                        "node_name": healing_agent.name,
+                                        "node_type": "AGENT",
+                                        "event_type": "SUCCESS",
+                                        "content": (
+                                            f"✅ [오류 복구 AI 에이전트] '{orig_label}' 오류 복구 완료 — "
+                                            f"설정('원래 워크플로우의 다음 노드 실행')에 따라 다음 노드로 진행합니다."
+                                        ),
+                                    })
+                                    continue
+                                else:
+                                    await internal_event_callback({
+                                        "node_id": healing_agent.id,
+                                        "node_name": healing_agent.name,
+                                        "node_type": "AGENT",
+                                        "event_type": "SUCCESS",
+                                        "content": (
+                                            f"🛑 [오류 복구 AI 에이전트] '{orig_label}' 오류 조치 완료 — "
+                                            f"설정('워크플로우 종료')에 따라 워크플로우를 종료합니다."
+                                        ),
+                                    })
+                                    overall_status = "FAILED"
+                                    last_error_msg = err_msg
+                                    break
+                            else:
+                                agent_err = getattr(agent_res, "error", None) or "오류 복구 AI 에이전트 실행 실패"
+                                overall_status = "FAILED"
+                                last_error_msg = f"{err_msg} (복구 에이전트 실패: {agent_err})"
+                                break
+
+                        overall_status = "FAILED"
+                        last_error_msg = err_msg
                         break
 
         except Exception as e:

@@ -48,6 +48,10 @@ def render_template(
         "last_output": "",
         "scroll_at_start": False,
         "scroll_at_end": False,
+        "last_error_message": "",
+        "last_error_node_id": "",
+        "last_error_node_name": "",
+        "retry_count": 0,
     }
 
     def replacer(match):

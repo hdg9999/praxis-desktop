@@ -62,6 +62,38 @@ export const SYSTEM_VARIABLES: SystemVariableInfo[] = [
     descriptionEn: 'Whether mouse scroll reached the very end',
     readonly: true,
   },
+  {
+    name: 'last_error_message',
+    type: 'string',
+    description: '최근 발생한 노드 실행 오류 메시지',
+    descriptionKo: '최근 발생한 노드 실행 오류 메시지',
+    descriptionEn: 'Most recent node execution error message',
+    readonly: true,
+  },
+  {
+    name: 'last_error_node_name',
+    type: 'string',
+    description: '최근 오류가 발생한 노드 이름',
+    descriptionKo: '최근 오류가 발생한 노드 이름',
+    descriptionEn: 'Name of the node where the most recent error occurred',
+    readonly: true,
+  },
+  {
+    name: 'last_error_node_id',
+    type: 'string',
+    description: '최근 오류가 발생한 노드 ID',
+    descriptionKo: '최근 오류가 발생한 노드 ID',
+    descriptionEn: 'ID of the node where the most recent error occurred',
+    readonly: true,
+  },
+  {
+    name: 'retry_count',
+    type: 'number',
+    description: '현재 노드의 재시도 횟수 (0~N)',
+    descriptionKo: '현재 노드의 재시도 횟수 (0~N)',
+    descriptionEn: 'Current node retry attempt count (0~N)',
+    readonly: true,
+  },
 ];
 
 export const SYSTEM_VARIABLE_NAMES = new Set(SYSTEM_VARIABLES.map((v) => v.name));

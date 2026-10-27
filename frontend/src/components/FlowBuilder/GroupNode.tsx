@@ -274,12 +274,22 @@ const GroupNode: React.FC<NodeProps> = ({ id, data, selected }) => {
                   <Edit3 className="w-2.5 h-2.5 text-slate-500 opacity-0 group-hover/title:opacity-100 transition-opacity shrink-0" />
                 </div>
               )}
-              <div className="text-[10px] text-teal-400/90 font-medium flex items-center gap-1">
+              <div className="text-[10px] text-teal-400/90 font-medium flex items-center gap-1 flex-wrap">
                 <span>{isEn ? 'Collapsed Group' : '그룹 접힘'}</span>
                 <span>·</span>
                 <span>
                   {isEn ? `${childNodes.length} node(s)` : `하위 노드 ${childNodes.length}개`}
                 </span>
+                {(cfg.error_mode === 'break_group' || cfg.break_on_error) && (
+                  <span className="text-[9px] px-1 py-0.2 rounded bg-amber-950/80 border border-amber-600/60 text-amber-200">
+                    ⏭️ Break
+                  </span>
+                )}
+                {(cfg.error_mode === 'catch_subflow' || cfg.catch_subflow_enabled) && (
+                  <span className="text-[9px] px-1 py-0.2 rounded bg-cyan-950/80 border border-cyan-600/60 text-cyan-200">
+                    🛡️ Catch
+                  </span>
+                )}
               </div>
             </div>
           </div>
@@ -417,6 +427,17 @@ const GroupNode: React.FC<NodeProps> = ({ id, data, selected }) => {
           <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full border shrink-0 ${theme.badge}`}>
             {isEn ? `${childNodes.length} node(s)` : `${childNodes.length}개 노드`}
           </span>
+
+          {(cfg.error_mode === 'break_group' || cfg.break_on_error) && (
+            <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-950/80 border border-amber-600/60 text-amber-200 font-medium shrink-0">
+              {isEn ? '⏭️ Break on Error' : '⏭️ 오류 시 그룹 건너뛰기'}
+            </span>
+          )}
+          {(cfg.error_mode === 'catch_subflow' || cfg.catch_subflow_enabled) && (
+            <span className="text-[10px] px-2 py-0.5 rounded-full bg-cyan-950/80 border border-cyan-600/60 text-cyan-200 font-medium shrink-0 truncate max-w-[160px]">
+              🛡️ Catch: {cfg.catch_subflow_name || (isEn ? 'Subflow' : '서브플로우')}
+            </span>
+          )}
         </div>
 
         {/* 우측 액션: '+' 그룹 내부에 스킬 노드 즉시 추가 버튼 */}

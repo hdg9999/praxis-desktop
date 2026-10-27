@@ -12,6 +12,10 @@ SYSTEM_VARIABLE_NAMES: Set[str] = {
     "time",
     "scroll_at_start",
     "scroll_at_end",
+    "last_error_message",
+    "last_error_node_id",
+    "last_error_node_name",
+    "retry_count",
 }
 
 VALID_VARIABLE_NAME_RE = re.compile(r"^[a-zA-Z_\uAC00-\uD7A3][a-zA-Z0-9_\uAC00-\uD7A3]*$")
@@ -127,6 +131,7 @@ class ExecutionContext:
     max_call_depth: int = 5
     step_counter: Dict[str, int] = {}
     max_total_steps: int = 500
+    session_logs: List[Dict[str, Any]] = []
 
     def __init__(
         self,
@@ -142,6 +147,7 @@ class ExecutionContext:
         max_call_depth: int = 5,
         step_counter: Optional[Dict[str, int]] = None,
         max_total_steps: int = 500,
+        session_logs: Optional[List[Dict[str, Any]]] = None,
     ):
         self.session_id = session_id
         self.event_callback = event_callback
@@ -155,6 +161,7 @@ class ExecutionContext:
         self.max_call_depth: int = max_call_depth
         self.step_counter: Dict[str, int] = step_counter if step_counter is not None else {"count": 0}
         self.max_total_steps: int = max_total_steps
+        self.session_logs: List[Dict[str, Any]] = session_logs if session_logs is not None else []
 
         # 1. 선언된 변수 스키마가 있으면 기본값(defaultValue)을 타입 정규화하여 초기화
         for var_name, schema in self.variable_schemas.items():

@@ -624,6 +624,150 @@ PRESET_SKILLS = {
     "all": list(AGENT_TOOLS.keys())
 }
 
+# ---------------------------------------------------------
+# 3-1. 오류 복구 AI 에이전트(Self-Healing Agent) 전용 런타임 스킬 매핑 및 세션 로그 열람 도구
+# ---------------------------------------------------------
+RECOVERY_ONLY_TOOLS: Dict[str, AgentToolDefinition] = {
+    "get_session_logs": AgentToolDefinition(
+        name="get_session_logs",
+        display_name="현 세션 실행 기록 열람",
+        description=(
+            "현재 실행 중인 워크플로우 세션의 Agent Runner 실행 로그(이전 노드들의 시작, 성공, 오류 메시지 이력)를 "
+            "조회합니다. 초기 요약본 외에 이전 단계의 상세 실행 내역이나 출력값을 확인할 때 사용하세요."
+        ),
+        category="system",
+        parameters={
+            "type": "object",
+            "properties": {
+                "offset": {
+                    "type": "integer",
+                    "description": "조회 시작 인덱스 (0부터 시작, 기본값: 0)",
+                    "default": 0,
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "한 번에 조회할 최대 로그 개수 (기본값: 15, 최대 30)",
+                    "default": 15,
+                },
+                "event_type": {
+                    "type": "string",
+                    "description": "특정 이벤트 타입만 필터링할 때 지정 (예: 'ERROR', 'SUCCESS', 'START' 또는 생략 시 전체)",
+                },
+            },
+            "required": [],
+        },
+    )
+}
+
+FAILED_NODE_DEFAULT_SKILLS_MAP: Dict[str, List[str]] = {
+    "general_mouse_click": ["mouse_click", "get_screen_elements"],
+    "general_mouse_move": ["mouse_move", "get_screen_elements"],
+    "general_mouse_drag": ["mouse_drag", "get_screen_elements"],
+    "general_mouse_scroll": ["mouse_scroll", "get_screen_elements"],
+    "general_keyboard_type": ["keyboard_type", "mouse_click", "get_screen_elements"],
+    "general_keyboard_hotkey": ["keyboard_hotkey", "get_screen_elements"],
+    "general_delay": ["delay", "get_screen_elements"],
+    "general_clipboard_copy": ["clipboard_copy"],
+    "general_clipboard_read": ["clipboard_read"],
+    "general_file_read": ["file_read"],
+    "general_file_write": ["file_write"],
+    "general_message_box": ["message_box"],
+    "general_window_activate": ["window_activate", "get_screen_elements"],
+    "general_window_maximize": ["window_maximize", "window_activate"],
+    "general_window_minimize": ["window_minimize", "window_activate"],
+    "general_window_close": ["window_close", "get_screen_elements"],
+    "general_screenshot": ["take_screenshot"],
+    "general_launch_program": ["launch_program", "window_activate"],
+    "general_close_program": ["close_program", "window_close"],
+    "general_kill_process": ["kill_process", "close_program"],
+    "browser_navigate": ["web_navigate", "web_get_snapshot"],
+    "browser_click": ["web_click", "web_get_snapshot"],
+    "browser_fill": ["web_fill", "web_click", "web_get_snapshot"],
+    "browser_extract": ["web_read_page", "web_get_snapshot"],
+    "browser_action": ["web_control", "web_get_snapshot"],
+    "browser_get_info": ["web_get_snapshot", "web_read_page"],
+    "browser_evaluate": ["web_control", "web_get_snapshot"],
+    "ai_ollama": ["get_screen_elements"],
+    "agent_basic": ["get_screen_elements", "mouse_click", "keyboard_type"],
+    "agent": ["get_screen_elements", "mouse_click", "keyboard_type"],
+    "flow_call": ["get_screen_elements", "mouse_click"],
+}
+
+
+def get_default_skills_for_failed_node(node_type: str) -> List[str]:
+    """
+    오류가 발생한 일반/브라우저 스킬 노드의 타입(node_type)에 대응하는
+    필수 에이전트 도구 목록을 반환합니다. (설정 메뉴에서 별도 체크하지 않아도 기본 로드됨)
+    """
+    clean_type = str(node_type or "").strip()
+    if clean_type in FAILED_NODE_DEFAULT_SKILLS_MAP:
+        return list(FAILED_NODE_DEFAULT_SKILLS_MAP[clean_type])
+    if clean_type.startswith("browser_"):
+        return ["web_get_snapshot", "web_click", "web_control"]
+    if clean_type.startswith("general_"):
+        sub = clean_type.replace("general_", "")
+        if sub in AGENT_TOOLS:
+            return [sub, "get_screen_elements"] if sub != "get_screen_elements" else [sub]
+    return ["get_screen_elements", "mouse_click"]
+
+
+def get_self_healing_tools_schema(
+    failed_node_type: str,
+    skill_mode: str = "custom",
+    preset_name: str = "basic_interaction",
+    custom_skills: Optional[List[str]] = None,
+    include_session_log_tool: bool = True,
+) -> List[Dict[str, Any]]:
+    """
+    오류 복구 AI 에이전트(Self-Healing Agent) 런타임 호출 시 사용할 Tool Schema 목록을 생성합니다.
+    1. 실패한 노드에 해당하는 에이전트 스킬을 최우선으로 자동 기본 로드합니다.
+    2. 사용자가 추가로 지정한 스킬셋(preset 또는 custom)을 중복 없이 병합합니다.
+    3. 온디맨드 세션 실행 기록 열람 도구(get_session_logs)를 함께 장착하여 초기 프롬프트 비대화를 방지합니다.
+    """
+    ordered_keys: List[str] = []
+    for k in get_default_skills_for_failed_node(failed_node_type):
+        if k in AGENT_TOOLS and k not in ordered_keys:
+            ordered_keys.append(k)
+
+    # 사용자가 추가로 허용한 스킬셋 병합
+    extra_keys: List[str] = []
+    if skill_mode == "preset":
+        extra_keys = PRESET_SKILLS.get(preset_name, PRESET_SKILLS["basic_interaction"])
+    elif skill_mode == "custom":
+        if custom_skills:
+            extra_keys = [k for k in custom_skills if k in AGENT_TOOLS]
+    # skill_mode == "minimal" 또는 빈 custom_skills인 경우 추가 스킬 없이 실패 노드 기본 스킬만 유지
+
+    for k in extra_keys:
+        if k in AGENT_TOOLS and k not in ordered_keys:
+            ordered_keys.append(k)
+
+    tools_schema: List[Dict[str, Any]] = []
+    for key in ordered_keys:
+        tool_def = AGENT_TOOLS.get(key)
+        if tool_def:
+            tools_schema.append({
+                "type": "function",
+                "function": {
+                    "name": tool_def.name,
+                    "description": tool_def.description,
+                    "parameters": tool_def.parameters,
+                },
+            })
+
+    if include_session_log_tool:
+        log_tool = RECOVERY_ONLY_TOOLS["get_session_logs"]
+        tools_schema.append({
+            "type": "function",
+            "function": {
+                "name": log_tool.name,
+                "description": log_tool.description,
+                "parameters": log_tool.parameters,
+            },
+        })
+
+    return tools_schema
+
 
 # ---------------------------------------------------------
 # 4. LLM용 Tool Schema(OpenAI / Ollama 규격) 생성
@@ -676,7 +820,7 @@ async def execute_agent_tool(
     if context and hasattr(context, "is_cancelled") and context.is_cancelled():
         return "[실행 중단] 사용자에 의해 비상 중단(F12)되었습니다."
 
-    tool_def = AGENT_TOOLS.get(name)
+    tool_def = AGENT_TOOLS.get(name) or RECOVERY_ONLY_TOOLS.get(name)
     if not tool_def:
         return f"[오류] 알 수 없는 스킬입니다: '{name}'"
 
@@ -1163,6 +1307,37 @@ async def execute_agent_tool(
             mapped = action_map.get(action, action)
             res = await playwright_service.perform_action(action_type=mapped, target_value=value)
             return f"[성공] 웹 브라우저 제어({action}) 완료: {res}"
+
+        # 28. 현 세션 실행 기록 열람 (오류 복구 에이전트용 온디맨드 로그 조회)
+        elif name == "get_session_logs":
+            offset = max(0, int(args.get("offset", 0) or 0))
+            limit = max(1, min(30, int(args.get("limit", 15) or 15)))
+            filter_ev = str(args.get("event_type") or "").strip().upper()
+
+            raw_logs: List[Dict[str, Any]] = []
+            if context and hasattr(context, "session_logs") and isinstance(context.session_logs, list):
+                raw_logs = list(context.session_logs)
+
+            if filter_ev:
+                raw_logs = [lg for lg in raw_logs if str(lg.get("event_type") or "").upper() == filter_ev]
+
+            total = len(raw_logs)
+            if total == 0:
+                return "[성공] 조회된 현 세션 실행 기록이 없습니다."
+
+            sliced = raw_logs[offset : offset + limit]
+            lines = [f"[현 세션 실행 기록 조회] 전체 {total}건 중 #{offset + 1}~#{offset + len(sliced)} 표시:"]
+            for idx, lg in enumerate(sliced, start=offset + 1):
+                ev_t = lg.get("event_type", "INFO")
+                n_name = lg.get("node_name", "")
+                c_text = str(lg.get("content") or "").replace("\n", " ").strip()
+                if len(c_text) > 160:
+                    c_text = c_text[:160] + "..."
+                lines.append(f"  #{idx} [{ev_t}] ({n_name}) {c_text}")
+
+            if offset + len(sliced) < total:
+                lines.append(f"👉 추가 기록 확인: get_session_logs(offset={offset + len(sliced)}, limit={limit})")
+            return "\n".join(lines)
 
         else:
             return f"[오류] 미구현된 스킬입니다: '{name}'"

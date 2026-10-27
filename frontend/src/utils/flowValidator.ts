@@ -1,5 +1,5 @@
 import { Node, Edge, Connection } from '@xyflow/react';
-import { WorkflowVariable, FlowNodeData, Flow, SubflowVariableMapping } from '../types';
+import { WorkflowVariable, FlowNodeData, Flow, SubflowVariableMapping, WorkflowSettings } from '../types';
 import {
   SYSTEM_VARIABLE_NAMES,
   analyzeNodeVariableUsage,
@@ -154,6 +154,23 @@ export function detectSubflowCallCycle(
           const cycle = dfs(nextTargetId, nextPathIds, nextPathNames);
           if (cycle) return cycle;
         }
+      } else if (sn?.type === 'flow_group') {
+        const gCfg = sn?.data?.config || {};
+        const isCatch = gCfg.error_mode === 'catch_subflow' || !!gCfg.catch_subflow;
+        const catchTargetId = String(gCfg.catch_subflow_id || '').trim();
+        if (isCatch && catchTargetId) {
+          const cycle = dfs(catchTargetId, nextPathIds, nextPathNames);
+          if (cycle) return cycle;
+        }
+      }
+    }
+
+    const globalErrHandler = fObj.graph_data?.settings?.global_error_handler;
+    if (globalErrHandler?.mode === 'subflow') {
+      const errTargetId = String(globalErrHandler.error_subflow_id || '').trim();
+      if (errTargetId) {
+        const cycle = dfs(errTargetId, nextPathIds, nextPathNames);
+        if (cycle) return cycle;
       }
     }
 
@@ -175,7 +192,8 @@ export function validateFlow(
   variables?: WorkflowVariable[],
   allFlows?: Flow[],
   currentFlowId?: string,
-  currentFlowName?: string
+  currentFlowName?: string,
+  flowSettings?: WorkflowSettings
 ): FlowValidationResult {
   const errors: string[] = [];
   const warnings: string[] = [];
@@ -319,6 +337,40 @@ export function validateFlow(
   );
   if (reachedEnd && intermediateNodes.length === 0) {
     warnings.push(tr('validation.noIntermediateNodes', '시작과 끝 노드 사이에 실행할 동작(스킬 노드)이 없습니다.'));
+  }
+
+  // 6-1. 그룹 노드(flow_group)의 Catch 서브플로우 유효성 및 순환 호출 검사
+  const groupNodes = nodes.filter((n) => n.type === 'flow_group');
+  for (const gn of groupNodes) {
+    const gData = (gn.data as unknown as FlowNodeData) || { label: gn.id, type: 'flow_group', config: {} };
+    const gLabel = gData.label || gn.id;
+    const gCfg = gData.config || {};
+    const isCatch = gCfg.error_mode === 'catch_subflow' || !!gCfg.catch_subflow || !!gCfg.catch_subflow_enabled;
+    if (isCatch) {
+      const catchId = String(gCfg.catch_subflow_id || '').trim();
+      if (!catchId) {
+        errors.push(`[${gLabel}] 그룹 Catch 서브 워크플로우가 선택되지 않았습니다.`);
+      } else {
+        const cycleChain = detectSubflowCallCycle(currentFlowId, currentFlowName, catchId, allFlows);
+        if (cycleChain) {
+          errors.push(`[${gLabel}] 그룹 Catch 서브 워크플로우 간 순환 호출(무한 루프)이 감지되었습니다: ${cycleChain.join(' ➔ ')}`);
+        }
+      }
+    }
+  }
+
+  // 6-2. 전역 에러 핸들러(Global Error Handler) 서브플로우 유효성 및 순환 호출 검사
+  const globalErr = flowSettings?.global_error_handler;
+  if (globalErr?.mode === 'subflow') {
+    const errSubflowId = String(globalErr.error_subflow_id || '').trim();
+    if (!errSubflowId) {
+      errors.push(`[전역 오류 처리] 실행할 에러 핸들러 서브플로우가 선택되지 않았습니다.`);
+    } else {
+      const cycleChain = detectSubflowCallCycle(currentFlowId, currentFlowName, errSubflowId, allFlows);
+      if (cycleChain) {
+        errors.push(`[전역 오류 처리] 에러 핸들러 서브플로우 간 순환 호출(무한 루프)이 감지되었습니다: ${cycleChain.join(' ➔ ')}`);
+      }
+    }
   }
 
   // 7. 워크플로우 변수 선언 및 타입 정합성 검사 (variables가 제공된 경우)

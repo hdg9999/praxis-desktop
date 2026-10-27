@@ -565,6 +565,8 @@ export const en: TranslationType = {
     defaultNumCtxHelp: 'Default context window size (tokens) applied to agent nodes. (Default: 8192, 8k~64k recommended)',
     applyModelToExistingBtn: 'Apply to All AI Nodes in Current Workflow',
     appliedCountMsg: 'Applied default model to {count} AI/Agent node(s).',
+    errorHandlerTitle: 'Global Error Handler',
+    errorHandlerSubtitle: 'Choose a recovery action when an unhandled error occurs in the workflow.',
     saveBtn: 'Apply Global Settings',
   },
 

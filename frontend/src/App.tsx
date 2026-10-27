@@ -203,8 +203,8 @@ export function App() {
 
   // 실시간 워크플로우 유효성 검사 (시작-끝 도달성, 무한루프, 고립 노드, 변수 선언/타입 검증, 서브 워크플로우 순환 호출 검증 포함)
   const validation = useMemo(
-    () => validateFlow(nodes, edges, t, variables, flows, activeFlow?.id, activeFlow?.name),
-    [nodes, edges, t, variables, flows, activeFlow?.id, activeFlow?.name]
+    () => validateFlow(nodes, edges, t, variables, flows, activeFlow?.id, activeFlow?.name, flowSettings),
+    [nodes, edges, t, variables, flows, activeFlow?.id, activeFlow?.name, flowSettings]
   );
 
   // 실행 취소(Undo) / 다시 실행(Redo) 히스토리 훅
@@ -646,13 +646,19 @@ export function App() {
     const rawEdges = flow.graph_data?.edges || [];
     const migrated = ensureStartAndEndNodes(rawNodes, rawEdges);
 
-    // 전역 설정 동기화 (기본값: 실행 딜레이 0.3초)
+    // 전역 설정 동기화 (기본값: 실행 딜레이 0.3초, 컨텍스트 8192, 전역 오류 핸들러)
     const loadedSettings: WorkflowSettings = {
       execution_delay:
         typeof flow.graph_data?.settings?.execution_delay === 'number'
           ? flow.graph_data.settings.execution_delay
           : 0.3,
       default_llm_model: flow.graph_data?.settings?.default_llm_model || '',
+      default_num_ctx:
+        typeof flow.graph_data?.settings?.default_num_ctx === 'number' &&
+        flow.graph_data.settings.default_num_ctx > 0
+          ? flow.graph_data.settings.default_num_ctx
+          : 8192,
+      global_error_handler: flow.graph_data?.settings?.global_error_handler,
     };
     setFlowSettings(loadedSettings);
 
@@ -1424,6 +1430,9 @@ export function App() {
         flowDescription={activeFlow?.description || ''}
         settings={flowSettings}
         ollamaModels={ollamaModels}
+        flows={flows}
+        activeFlowId={activeFlow?.id}
+        activeFlowName={activeFlow?.name}
         onApplySettings={handleApplyFlowSettings}
       />
     </div>

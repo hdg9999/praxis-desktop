@@ -42,12 +42,19 @@ export interface SubflowVariableMapping {
   sub_var: string;
 }
 
+export type GroupErrorMode = 'none' | 'break_group' | 'catch_subflow';
+
 export interface GroupNodeConfig {
   collapsed?: boolean;
   width?: number;
   height?: number;
   color?: 'indigo' | 'emerald' | 'amber' | 'sky' | 'purple' | 'rose' | 'slate';
   description?: string;
+  error_mode?: GroupErrorMode;
+  break_group?: boolean;
+  catch_subflow?: boolean;
+  catch_subflow_id?: string;
+  catch_subflow_name?: string;
 }
 
 export interface SubflowNodeConfig {
@@ -74,6 +81,10 @@ export interface AgentNodeConfig {
 export interface NodeConfig {
   note?: string;
   note_collapsed?: boolean;
+  retry_enabled?: boolean;
+  retry_count?: number;
+  retry_interval?: number;
+  continue_on_error?: boolean;
   [key: string]: any;
 }
 
@@ -93,10 +104,27 @@ export interface WorkflowVariable {
   description?: string;
 }
 
+export type GlobalErrorHandlerMode = 'none' | 'subflow' | 'self_healing_agent';
+export type AfterErrorAgentAction = 'continue_next' | 'stop_workflow';
+
+export interface GlobalErrorHandlerConfig {
+  mode: GlobalErrorHandlerMode;
+  error_subflow_id?: string;
+  error_subflow_name?: string;
+  after_agent_action?: AfterErrorAgentAction;
+  skill_mode?: 'preset' | 'custom';
+  preset_name?: 'basic_interaction' | 'web_playwright' | 'all';
+  custom_skills?: string[];
+  user_prompt?: string;
+  max_steps?: number;
+  include_screen_capture?: boolean;
+}
+
 export interface WorkflowSettings {
   execution_delay: number;
   default_llm_model: string;
   default_num_ctx?: number;
+  global_error_handler?: GlobalErrorHandlerConfig;
 }
 
 export interface Flow {
