@@ -13,6 +13,7 @@ import {
 import { FlowNodeData, NodeType } from '../../types';
 import { SKILL_ITEMS } from './skillRegistry';
 import { useI18n } from '../../i18n';
+import NodeNoteSubtitle from './NodeNoteSubtitle';
 
 const COLOR_THEMES: Record<
   string,
@@ -284,6 +285,14 @@ const GroupNode: React.FC<NodeProps> = ({ id, data, selected }) => {
           </div>
         </div>
 
+        {/* 노드 이름(제목) 바로 아래 서브타이틀 주석 영역 */}
+        <NodeNoteSubtitle
+          nodeId={id}
+          note={cfg.note ?? cfg.description}
+          collapsed={cfg.note_collapsed}
+          className="mb-1.5"
+        />
+
         {/* 하위 노드 요약 칩 목록 */}
         <div className="bg-slate-950/80 rounded-lg px-2.5 py-1.5 border border-slate-800/90 space-y-1">
           {childNodes.length === 0 ? (
@@ -342,8 +351,9 @@ const GroupNode: React.FC<NodeProps> = ({ id, data, selected }) => {
 
       {/* 상단 그룹 헤더 바 */}
       <div
-        className={`flex items-center justify-between gap-2 px-3.5 py-2 rounded-t-xl border-b backdrop-blur-sm ${theme.headerBg}`}
+        className={`flex flex-col gap-1 px-3.5 py-2 rounded-t-xl border-b backdrop-blur-sm ${theme.headerBg}`}
       >
+        <div className="flex items-center justify-between gap-2 w-full">
         <div className="flex items-center gap-2 min-w-0 flex-1">
           <button
             type="button"
@@ -467,6 +477,14 @@ const GroupNode: React.FC<NodeProps> = ({ id, data, selected }) => {
             </div>
           )}
         </div>
+        </div>
+
+        {/* 노드 이름(제목) 바로 아래 서브타이틀 주석 영역 */}
+        <NodeNoteSubtitle
+          nodeId={id}
+          note={cfg.note ?? cfg.description}
+          collapsed={cfg.note_collapsed}
+        />
       </div>
 
       {/* 그룹 바디 영역 (하위 노드가 없을 때 가이드 안내 표시) */}

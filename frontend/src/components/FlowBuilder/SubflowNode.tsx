@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { FlowNodeData, SubflowVariableMapping } from '../../types';
 import { useI18n } from '../../i18n';
+import NodeNoteSubtitle from './NodeNoteSubtitle';
 
 const SubflowNode: React.FC<NodeProps> = ({ id, data, selected }) => {
   const { deleteElements } = useReactFlow();
@@ -66,7 +67,7 @@ const SubflowNode: React.FC<NodeProps> = ({ id, data, selected }) => {
       />
 
       <div className="flex items-center gap-2 mb-1.5">
-        <div className="p-1.5 rounded-lg bg-cyan-950/80 border border-cyan-700/60">
+        <div className="p-1.5 rounded-lg bg-cyan-950/80 border border-cyan-700/60 shrink-0">
           <GitBranchPlus className="w-4 h-4 text-cyan-400" />
         </div>
         <div className="flex-1 min-w-0">
@@ -76,6 +77,14 @@ const SubflowNode: React.FC<NodeProps> = ({ id, data, selected }) => {
           </div>
         </div>
       </div>
+
+      {/* 노드 이름(제목) 바로 아래 서브타이틀 주석 영역 */}
+      <NodeNoteSubtitle
+        nodeId={id}
+        note={cfg.note}
+        collapsed={cfg.note_collapsed}
+        className="mb-1.5"
+      />
 
       {/* 호출 대상 워크플로우 배지 */}
       <div className="text-[11px] bg-slate-950/80 rounded-lg px-2.5 py-1.5 border border-slate-800/90 space-y-1">

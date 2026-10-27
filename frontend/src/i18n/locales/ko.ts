@@ -274,12 +274,17 @@ export const ko = {
     screenshotAll: '전체 화면',
     saveFile: '파일 저장',
     copyClipboard: '클립보드 복사',
+    expandNote: '주석 펼치기',
+    collapseNote: '주석 접기',
   },
 
   // 속성 편집창 (Property Inspector)
   inspector: {
     title: '노드 속성 설정',
     nodeNameLabel: '노드 이름',
+    nodeNoteLabel: '노드 주석 (부가 설명)',
+    nodeNotePlaceholder: '이 노드의 역할이나 참고 메모를 입력하세요 (줄바꿈 가능, 노드 버블 제목 아래에 표시됨)',
+    nodeNoteClear: '지우기',
     nodeTypeLabel: '노드 유형',
     deleteNodeButton: '노드 삭제',
     closeButton: '닫기',

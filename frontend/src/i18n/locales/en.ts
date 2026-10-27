@@ -276,12 +276,17 @@ export const en: TranslationType = {
     screenshotAll: 'All Monitors',
     saveFile: 'Save File',
     copyClipboard: 'Copy to Clipboard',
+    expandNote: 'Expand note',
+    collapseNote: 'Collapse note',
   },
 
   // 속성 편집창 (Property Inspector)
   inspector: {
     title: 'Node Properties',
     nodeNameLabel: 'Node Name',
+    nodeNoteLabel: 'Node Note (Description)',
+    nodeNotePlaceholder: 'Enter supplementary notes or comments for this node (multi-line supported, shown under node title)',
+    nodeNoteClear: 'Clear',
     nodeTypeLabel: 'Node Type',
     deleteNodeButton: 'Delete Node',
     closeButton: 'Close',

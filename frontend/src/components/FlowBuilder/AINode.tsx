@@ -3,6 +3,7 @@ import { Handle, Position, NodeProps, useReactFlow } from '@xyflow/react';
 import { Sparkles, Bot, Variable, X } from 'lucide-react';
 import { FlowNodeData } from '../../types';
 import { useI18n } from '../../i18n';
+import NodeNoteSubtitle from './NodeNoteSubtitle';
 
 const AINode: React.FC<NodeProps> = ({ id, data, selected }) => {
   const { deleteElements } = useReactFlow();
@@ -24,7 +25,7 @@ const AINode: React.FC<NodeProps> = ({ id, data, selected }) => {
 
   return (
     <div
-      className={`relative min-w-[220px] rounded-xl bg-slate-900 border transition-all shadow-md px-3.5 py-3 ${
+      className={`relative min-w-[220px] max-w-[300px] rounded-xl bg-slate-900 border transition-all shadow-md px-3.5 py-3 ${
         selected ? 'border-purple-500 shadow-purple-500/25 ring-1 ring-purple-500' : 'border-purple-900/40 hover:border-purple-700/60'
       }`}
     >
@@ -49,17 +50,25 @@ const AINode: React.FC<NodeProps> = ({ id, data, selected }) => {
       />
 
       <div className="flex items-center justify-between gap-2 mb-2">
-        <div className="flex items-center gap-2">
-          <div className="p-1.5 rounded-lg bg-purple-950/80 border border-purple-800/60 text-purple-400">
+        <div className="flex items-center gap-2 min-w-0">
+          <div className="p-1.5 rounded-lg bg-purple-950/80 border border-purple-800/60 text-purple-400 shrink-0">
             <Sparkles className="w-4 h-4" />
           </div>
           <div className="text-xs font-semibold text-slate-100 truncate">{nodeData.label}</div>
         </div>
-        <div className="flex items-center gap-1 text-[10px] bg-purple-900/40 border border-purple-700/50 text-purple-300 px-2 py-0.5 rounded-full font-mono">
+        <div className="flex items-center gap-1 text-[10px] bg-purple-900/40 border border-purple-700/50 text-purple-300 px-2 py-0.5 rounded-full font-mono shrink-0">
           <Bot className="w-3 h-3" />
           {model}
         </div>
       </div>
+
+      {/* 노드 이름(제목) 바로 아래 서브타이틀 주석 영역 */}
+      <NodeNoteSubtitle
+        nodeId={id}
+        note={cfg.note}
+        collapsed={cfg.note_collapsed}
+        className="mb-2"
+      />
 
       <div className="text-[11px] text-slate-300 bg-slate-950/80 rounded px-2.5 py-1.5 border border-slate-800/80 mb-1.5 line-clamp-2 italic">
         {prompt ? `"${prompt}"` : `(${t('common.none')})`}

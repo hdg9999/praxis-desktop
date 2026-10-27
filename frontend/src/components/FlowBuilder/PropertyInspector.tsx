@@ -55,6 +55,7 @@ import {
   Compass,
   Info,
   Code2,
+  StickyNote,
 } from 'lucide-react';
 import {
   FlowNodeData,
@@ -329,7 +330,12 @@ export const PropertyInspector: React.FC<PropertyInspectorProps> = ({
     const target = e.target as HTMLElement;
     if (target.tagName !== 'INPUT' && target.tagName !== 'TEXTAREA') return;
     const inputEl = target as HTMLInputElement | HTMLTextAreaElement;
-    if (inputEl.type === 'number' || inputEl.type === 'checkbox' || inputEl.type === 'range') {
+    if (
+      inputEl.type === 'number' ||
+      inputEl.type === 'checkbox' ||
+      inputEl.type === 'range' ||
+      inputEl.getAttribute('data-ignore-var-focus') === 'true'
+    ) {
       return;
     }
 
@@ -975,9 +981,66 @@ export const PropertyInspector: React.FC<PropertyInspectorProps> = ({
           <label className="block text-xs font-medium text-slate-400 mb-1">{t('inspector.nodeNameLabel')}</label>
           <input
             type="text"
+            data-ignore-var-focus="true"
             value={nodeData.label}
             onChange={(e) => handleLabelChange(e.target.value)}
             className="w-full px-3 py-1.5 text-xs bg-slate-950 border border-slate-700 rounded-lg text-slate-200 focus:outline-none focus:border-blue-500"
+          />
+        </div>
+
+        {/* 노드 주석 (부가 설명) */}
+        <div>
+          <div className="flex items-center justify-between gap-1 mb-1">
+            <label className="text-xs font-medium text-amber-300/90 flex items-center gap-1.5">
+              <StickyNote className="w-3.5 h-3.5 text-amber-400" />
+              <span>{t('inspector.nodeNoteLabel')}</span>
+            </label>
+            {Boolean((cfg.note ?? (isGroup ? cfg.description ?? '' : '')).trim()) && (
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => handleConfigChange('note_collapsed', !cfg.note_collapsed)}
+                  className="text-[10px] px-1.5 py-0.5 rounded bg-amber-950/60 hover:bg-amber-900/70 text-amber-300 border border-amber-700/50 transition-colors flex items-center gap-0.5 cursor-pointer"
+                  title={cfg.note_collapsed ? t('nodes.expandNote') : t('nodes.collapseNote')}
+                >
+                  {cfg.note_collapsed ? (
+                    <ChevronRight className="w-3 h-3" />
+                  ) : (
+                    <ChevronDown className="w-3 h-3" />
+                  )}
+                  <span>{cfg.note_collapsed ? t('nodes.expandNote') : t('nodes.collapseNote')}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    handleMultiConfigChange({
+                      note: '',
+                      note_collapsed: false,
+                      ...(isGroup ? { description: '' } : {}),
+                    })
+                  }
+                  className="text-[10px] text-slate-500 hover:text-rose-400 transition-colors cursor-pointer"
+                  title={t('inspector.nodeNoteClear')}
+                >
+                  {t('inspector.nodeNoteClear')}
+                </button>
+              </div>
+            )}
+          </div>
+          <textarea
+            rows={2}
+            data-ignore-var-focus="true"
+            value={cfg.note ?? (isGroup ? cfg.description ?? '' : '')}
+            onChange={(e) => {
+              const val = e.target.value;
+              if (isGroup && cfg.description !== undefined && cfg.note === undefined) {
+                handleMultiConfigChange({ note: val, description: val });
+              } else {
+                handleConfigChange('note', val);
+              }
+            }}
+            placeholder={t('inspector.nodeNotePlaceholder')}
+            className="w-full px-3 py-1.5 text-xs bg-slate-950 border border-slate-700/90 rounded-lg text-amber-100 placeholder:text-slate-600 focus:outline-none focus:border-amber-500/80 resize-y leading-relaxed"
           />
         </div>
 

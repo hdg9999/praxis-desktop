@@ -1347,7 +1347,7 @@ export function App() {
             {/* 우측 속성 설정 패널 */}
             {selectedNode && (
               <PropertyInspector
-                selectedNode={selectedNode}
+                selectedNode={nodes.find((n) => n.id === selectedNode.id) || selectedNode}
                 ollamaModels={ollamaModels}
                 onUpdateNodeData={handleUpdateNodeData}
                 onDeleteNode={handleDeleteNode}

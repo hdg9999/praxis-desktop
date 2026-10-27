@@ -32,6 +32,7 @@ import {
 } from 'lucide-react';
 import { FlowNodeData } from '../../types';
 import { useI18n } from '../../i18n';
+import NodeNoteSubtitle from './NodeNoteSubtitle';
 
 const GeneralNode: React.FC<NodeProps> = ({ id, data, type, selected }) => {
   const { deleteElements } = useReactFlow();
@@ -254,9 +255,11 @@ const GeneralNode: React.FC<NodeProps> = ({ id, data, type, selected }) => {
     return subtype;
   };
 
+  const cfg = nodeData.config || {};
+
   return (
     <div
-      className={`relative min-w-[190px] rounded-xl bg-slate-900 border transition-all shadow-md px-3 py-2.5 ${
+      className={`relative min-w-[190px] max-w-[290px] rounded-xl bg-slate-900 border transition-all shadow-md px-3 py-2.5 ${
         selected ? 'border-blue-500 shadow-blue-500/20 ring-1 ring-blue-500' : 'border-slate-700/80 hover:border-slate-600'
       }`}
     >
@@ -281,7 +284,7 @@ const GeneralNode: React.FC<NodeProps> = ({ id, data, type, selected }) => {
       />
 
       <div className="flex items-center gap-2 mb-1.5">
-        <div className="p-1.5 rounded-lg bg-slate-800 border border-slate-700/60">
+        <div className="p-1.5 rounded-lg bg-slate-800 border border-slate-700/60 shrink-0">
           {getIcon()}
         </div>
         <div className="flex-1 min-w-0">
@@ -296,6 +299,14 @@ const GeneralNode: React.FC<NodeProps> = ({ id, data, type, selected }) => {
           </div>
         </div>
       </div>
+
+      {/* 노드 이름(제목) 바로 아래 서브타이틀 주석 영역 */}
+      <NodeNoteSubtitle
+        nodeId={id}
+        note={cfg.note}
+        collapsed={cfg.note_collapsed}
+        className="mb-1.5"
+      />
 
       <div className="text-[11px] text-slate-400 bg-slate-950/60 rounded px-2 py-1 border border-slate-800/80 truncate">
         {getSummary()}

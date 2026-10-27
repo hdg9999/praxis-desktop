@@ -72,6 +72,8 @@ export interface AgentNodeConfig {
 }
 
 export interface NodeConfig {
+  note?: string;
+  note_collapsed?: boolean;
   [key: string]: any;
 }
 
