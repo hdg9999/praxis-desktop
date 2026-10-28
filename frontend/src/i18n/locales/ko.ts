@@ -64,7 +64,8 @@ export const ko = {
     multipleStartNodes: "'시작' 노드는 워크플로우에 오직 1개만 존재해야 합니다.",
     noEndNode: "'끝' 노드가 존재하지 않습니다.",
     multipleEndNodes: "'끝' 노드는 워크플로우에 오직 1개만 존재해야 합니다.",
-    cycleDetected: '워크플로우에 무한루프(순환 참조)가 감지되었습니다.',
+    cycleDetected: '워크플로우에 반복 루프(순환 경로)가 포함되어 있습니다. 의도된 반복이나 상시 모니터링이 아니라면 탈출 조건을 확인하세요.',
+    infiniteLoopNoEndWarning: "'끝' 노드로 이어지는 탈출 경로가 없는 무한 반복(24시간 모니터링 등) 구조입니다.",
     disconnectedStartEnd: "'시작' 노드와 '끝' 노드가 끊김 없이 연결되어 있어야 합니다.",
     cannotCompleteNoEnd: "'끝' 노드가 없어 워크플로우를 완료할 수 없습니다.",
     orphanWarning: '연결되지 않은 고립 노드가 {count}개 있습니다. (실행 시 무시됨)',
@@ -220,6 +221,18 @@ export const ko = {
     flow_call: {
       label: '다른 워크플로우 호출',
       desc: '기존에 저장된 서브 워크플로우를 호출하고 입출력 변수를 매핑하여 실행',
+    },
+    flow_branch: {
+      label: '조건 분기 (If / Else)',
+      desc: '변수/값 비교, 화면 UI 오브젝트 또는 웹 요소 존재 여부에 따라 참(True)/거짓(False) 경로로 분기',
+    },
+    flow_loop: {
+      label: '반복 실행 (Loop)',
+      desc: '지정 횟수(N회) 반복 또는 24시간 상시 모니터링을 위한 무한 반복 루프 제어',
+    },
+    flow_set_variable: {
+      label: '변수 값 설정 / 연산',
+      desc: '선언된 워크플로우 변수에 값 대입(=), 숫자 증감(+/-), 문자열 결합 또는 불리언 반전 수행',
     },
     browser_navigate: {
       label: '웹 브라우저 열기 / 이동',

@@ -29,6 +29,7 @@ import {
   Compass,
   Info,
   Code2,
+  Variable,
 } from 'lucide-react';
 import { FlowNodeData } from '../../types';
 import { useI18n } from '../../i18n';
@@ -80,6 +81,9 @@ const GeneralNode: React.FC<NodeProps> = ({ id, data, type, selected }) => {
       case 'browser_action': return <Compass className="w-4 h-4 text-indigo-400" />;
       case 'browser_get_info': return <Info className="w-4 h-4 text-blue-400" />;
       case 'browser_evaluate': return <Code2 className="w-4 h-4 text-amber-400" />;
+      case 'flow_set_variable':
+      case 'set_variable':
+        return <Variable className="w-4 h-4 text-emerald-400" />;
       default: return <MousePointer className="w-4 h-4 text-slate-400" />;
     }
   };
@@ -252,6 +256,22 @@ const GeneralNode: React.FC<NodeProps> = ({ id, data, type, selected }) => {
     if (subtype === 'browser_evaluate') {
       return `⚡ JS → {{${cfg.output_variable || 'js_result'}}}`;
     }
+    if (subtype === 'flow_set_variable' || subtype === 'set_variable') {
+      const targetVar = cfg.target_variable || cfg.output_variable || '변수미지정';
+      const op = String(cfg.operation || 'set').toLowerCase();
+      const opSymbolMap: Record<string, string> = {
+        set: '=',
+        increment: '+=',
+        decrement: '-=',
+        append: '+= (문자열)',
+        toggle: '⇄ 반전(Toggle)',
+      };
+      const sym = opSymbolMap[op] || '=';
+      if (op === 'toggle') {
+        return `📝 {{${targetVar}}} ${sym}`;
+      }
+      return `📝 {{${targetVar}}} ${sym} ${cfg.value ?? ''}`;
+    }
     return subtype;
   };
 
@@ -275,10 +295,10 @@ const GeneralNode: React.FC<NodeProps> = ({ id, data, type, selected }) => {
         </button>
       )}
 
-      {/* Left Input Handle (target) */}
+      {/* Top Input Handle (target) */}
       <Handle
         type="target"
-        position={Position.Left}
+        position={Position.Top}
         id="target"
         className="!w-3.5 !h-3.5 !bg-blue-500 !border-2 !border-slate-900 !z-20 transition-all hover:scale-125 hover:!bg-blue-400 cursor-crosshair"
       />
@@ -328,10 +348,10 @@ const GeneralNode: React.FC<NodeProps> = ({ id, data, type, selected }) => {
         </div>
       )}
 
-      {/* Right Output Handle (source) */}
+      {/* Bottom Output Handle (source) */}
       <Handle
         type="source"
-        position={Position.Right}
+        position={Position.Bottom}
         id="source"
         className="!w-3.5 !h-3.5 !bg-blue-500 !border-2 !border-slate-900 !z-20 transition-all hover:scale-125 hover:!bg-blue-400 cursor-crosshair"
       />

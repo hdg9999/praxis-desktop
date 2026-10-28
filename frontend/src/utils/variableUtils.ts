@@ -94,6 +94,22 @@ export const SYSTEM_VARIABLES: SystemVariableInfo[] = [
     descriptionEn: 'Current node retry attempt count (0~N)',
     readonly: true,
   },
+  {
+    name: 'loop_index',
+    type: 'number',
+    description: '현재 반복(Loop) 노드의 실행 회차 (1~N)',
+    descriptionKo: '현재 반복(Loop) 노드의 실행 회차 (1~N)',
+    descriptionEn: 'Current iteration index of the active Loop node (1~N)',
+    readonly: true,
+  },
+  {
+    name: 'branch_result',
+    type: 'boolean',
+    description: '직전 조건 분기(If/Else) 노드의 판별 결과 (true/false)',
+    descriptionKo: '직전 조건 분기(If/Else) 노드의 판별 결과 (true/false)',
+    descriptionEn: 'Evaluation result of the preceding Condition Branch node (true/false)',
+    readonly: true,
+  },
 ];
 
 export const SYSTEM_VARIABLE_NAMES = new Set(SYSTEM_VARIABLES.map((v) => v.name));
@@ -334,6 +350,20 @@ export function getNodeOutputVariableRequirement(
       defaultVarName: 'downloaded_file_path',
     };
   }
+  if (nodeType === 'flow_loop' && config?.output_variable && String(config.output_variable).trim() !== '') {
+    return {
+      usesOutputVar: true,
+      expectedTypes: ['number', 'string'],
+      defaultVarName: 'loop_idx',
+    };
+  }
+  if (nodeType === 'flow_branch' && config?.output_variable && String(config.output_variable).trim() !== '') {
+    return {
+      usesOutputVar: true,
+      expectedTypes: ['boolean', 'string'],
+      defaultVarName: 'branch_flag',
+    };
+  }
   return {
     usesOutputVar: false,
     expectedTypes: [],
@@ -396,6 +426,9 @@ export function analyzeNodeVariableUsage(node: Node): {
     'target_value',
     'option_value',
     'script',
+    'left_value',
+    'right_value',
+    'value',
   ];
 
   const referencedSet = new Set<string>();
@@ -407,7 +440,19 @@ export function analyzeNodeVariableUsage(node: Node): {
   }
 
   // 숫자 좌표 등에 {{변수명}}이 들어간 경우
-  const numericFields = ['x', 'y', 'start_x', 'start_y', 'end_x', 'end_y', 'seconds', 'duration', 'interval', 'ticks'];
+  const numericFields = [
+    'x',
+    'y',
+    'start_x',
+    'start_y',
+    'end_x',
+    'end_y',
+    'seconds',
+    'duration',
+    'interval',
+    'ticks',
+    'loop_count',
+  ];
   const numericFieldVars: { field: string; varName: string }[] = [];
   for (const nf of numericFields) {
     const val = cfg[nf];

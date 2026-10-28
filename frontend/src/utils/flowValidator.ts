@@ -58,10 +58,11 @@ export function wouldCreateCycle(
 
 /**
  * React Flow isValidConnection 검증 콜백
- * 1. 자기 자신 연결 차단
- * 2. 출발 노드의 다중 분기 차단 (Out-degree <= 1)
- * 3. 도착 노드의 다중 합류 차단 (In-degree <= 1)
- * 4. 무한루프(사이클)를 생성하는 역방향 연결 사전 차단
+ * 1. 자기 자신 연결 차단 (Self-loop 방지)
+ * 2. 동일 출력 핸들(source + sourceHandle)당 단일 연결만 허용
+ *    (분기/반복 노드는 서로 다른 sourceHandle을 통해 다중 분기 가능)
+ * 3. 도착 노드의 다중 합류(In-degree >= 1) 허용 (분기 합류 및 루프 재진입 지원)
+ * 4. 루프(순환 경로) 연결 허용 (캔버스에서는 경고 배지로 안내)
  */
 export function checkConnectionValidity(
   connection: Connection | Edge,
@@ -72,22 +73,17 @@ export function checkConnectionValidity(
   if (!source || !target) return false;
   if (source === target) return false;
 
-  // 1) 다중 분기 차단: 이미 해당 source에서 나가는 간선이 있는 경우
-  const alreadyHasOutgoing = edges.some(
-    (e) => e.source === source && e.target !== target
-  );
-  if (alreadyHasOutgoing) return false;
+  const srcHandle = connection.sourceHandle || 'default';
 
-  // 2) 다중 합류 차단: 이미 해당 target으로 들어오는 간선이 있는 경우
-  const alreadyHasIncoming = edges.some(
-    (e) => e.target === target && e.source !== source
+  // 동일 (source, sourceHandle)에서 이미 다른 노드로 나가는 간선이 있으면 중복 분기 차단
+  const alreadyHasOutgoingOnHandle = edges.some(
+    (e) =>
+      !(e.data as any)?.isGroupBridge &&
+      e.source === source &&
+      (e.sourceHandle || 'default') === srcHandle &&
+      e.target !== target
   );
-  if (alreadyHasIncoming) return false;
-
-  // 3) 사이클(무한루프) 형성 차단
-  if (wouldCreateCycle(source, target, edges)) {
-    return false;
-  }
+  if (alreadyHasOutgoingOnHandle) return false;
 
   return true;
 }
@@ -245,13 +241,13 @@ export function validateFlow(
     }
   }
 
-  // 3. 무한루프 (사이클) 검출 (DFS 3-color)
+  // 3. 루프 (사이클) 검출 (DFS 3-color) - 차단 오류(Error)가 아닌 경고(Warning)로 안내
   let hasCycle = false;
   const cycleNodeIds: string[] = [];
   const visitedState = new Map<string, 'unvisited' | 'visiting' | 'visited'>();
   for (const n of executableNodes) visitedState.set(n.id, 'unvisited');
 
-  const dfsCycle = (currId: string, path: string[]): boolean => {
+  const dfsCycle = (currId: string, path: string[]) => {
     visitedState.set(currId, 'visiting');
     path.push(currId);
 
@@ -266,54 +262,71 @@ export function validateFlow(
         } else {
           cycleNodeIds.push(nxt, currId);
         }
-        return true;
-      }
-      if (state === 'unvisited') {
-        if (dfsCycle(nxt, path)) return true;
+      } else if (state === 'unvisited') {
+        dfsCycle(nxt, path);
       }
     }
 
     path.pop();
     visitedState.set(currId, 'visited');
-    return false;
   };
 
   for (const n of executableNodes) {
     if (visitedState.get(n.id) === 'unvisited') {
-      if (dfsCycle(n.id, [])) break;
+      dfsCycle(n.id, []);
     }
   }
 
   if (hasCycle) {
-    errors.push(tr('validation.cycleDetected', '워크플로우에 무한루프(순환 참조)가 감지되었습니다.'));
+    warnings.push(
+      tr(
+        'validation.cycleDetected',
+        '워크플로우에 반복 루프(순환 경로)가 포함되어 있습니다. 의도된 반복이나 상시 모니터링이 아니라면 탈출 조건을 확인하세요.'
+      )
+    );
   }
 
-  // 4. 시작 노드에서 끝 노드까지의 유효 실행 경로 탐색 (순차 체인)
-  const activeNodeIds: string[] = [];
-  let reachedEnd = false;
-
-  if (startNode && endNode && !hasCycle) {
-    let curr: string | undefined = startNode.id;
-    const visitedInChain = new Set<string>();
-
-    while (curr) {
-      if (visitedInChain.has(curr)) break;
-      visitedInChain.add(curr);
-      activeNodeIds.push(curr);
-
-      if (curr === endNode.id) {
-        reachedEnd = true;
-        break;
-      }
+  // 4. 시작 노드에서 도달 가능한 모든 실행 경로 탐색 (BFS 다중 분기/루프 탐색)
+  const reachableFromStart = new Set<string>();
+  if (startNode) {
+    const queue: string[] = [startNode.id];
+    while (queue.length > 0) {
+      const curr = queue.shift()!;
+      if (reachableFromStart.has(curr)) continue;
+      reachableFromStart.add(curr);
 
       const nextList: string[] = adj.get(curr) || [];
-      curr = nextList.length > 0 ? nextList[0] : undefined;
+      for (const nxt of nextList) {
+        if (!reachableFromStart.has(nxt)) {
+          queue.push(nxt);
+        }
+      }
     }
+  }
 
+  const activeNodeIds: string[] = Array.from(reachableFromStart);
+  const reachedEnd = !!(endNode && reachableFromStart.has(endNode.id));
+  const hasActiveCycle = hasCycle && cycleNodeIds.some((id) => reachableFromStart.has(id));
+
+  if (startNode && endNode) {
     if (!reachedEnd) {
-      errors.push(tr('validation.disconnectedStartEnd', "'시작' 노드와 '끝' 노드가 끊김 없이 연결되어 있어야 합니다."));
+      if (hasActiveCycle && activeNodeIds.length > 1) {
+        warnings.push(
+          tr(
+            'validation.infiniteLoopNoEndWarning',
+            "'끝' 노드로 이어지는 탈출 경로가 없는 무한 반복(24시간 모니터링 등) 구조입니다."
+          )
+        );
+      } else {
+        errors.push(
+          tr(
+            'validation.disconnectedStartEnd',
+            "'시작' 노드와 '끝' 노드가 끊김 없이 연결되어 있어야 합니다."
+          )
+        );
+      }
     }
-  } else if (!hasCycle && startNode && !endNode) {
+  } else if (startNode && !endNode && !hasActiveCycle) {
     errors.push(tr('validation.cannotCompleteNoEnd', "'끝' 노드가 없어 워크플로우를 완료할 수 없습니다."));
   }
 
@@ -470,6 +483,20 @@ export function validateFlow(
 
       const usage = analyzeNodeVariableUsage(node);
 
+      // (0) 변수 값 설정/연산 노드(flow_set_variable)의 대상 변수(target_variable) 검증
+      if (node.type === 'flow_set_variable') {
+        const targetVar = String(cfg.target_variable || cfg.output_variable || '').trim();
+        if (!targetVar) {
+          errors.push(`[${nodeLabel}] 값을 설정할 대상 변수가 선택되지 않았습니다.`);
+        } else if (SYSTEM_VARIABLE_NAMES.has(targetVar)) {
+          errors.push(`[${nodeLabel}] 시스템 내장 변수('${targetVar}')는 읽기 전용이므로 값을 변경할 수 없습니다.`);
+        } else if (!varMap.has(targetVar)) {
+          errors.push(
+            `[${nodeLabel}] 선언되지 않은 대상 변수 '${targetVar}'이(가) 지정되었습니다. 하단 변수 관리 패널에서 먼저 변수를 선언해 주세요.`
+          );
+        }
+      }
+
       // (a) 출력 변수(output_variable) 선언 여부 및 타입 호환성 검사
       if (usage.outputVar !== null) {
         if (!usage.outputVar) {
@@ -547,7 +574,9 @@ export function validateFlow(
     }
   }
 
-  const isValid = errors.length === 0 && reachedEnd;
+  const isValid =
+    errors.length === 0 &&
+    (reachedEnd || (!!startNode && hasActiveCycle && activeNodeIds.length > 1));
 
   return {
     isValid,

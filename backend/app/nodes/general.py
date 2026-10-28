@@ -52,6 +52,8 @@ def render_template(
         "last_error_node_id": "",
         "last_error_node_name": "",
         "retry_count": 0,
+        "loop_index": 0,
+        "branch_result": False,
     }
 
     def replacer(match):

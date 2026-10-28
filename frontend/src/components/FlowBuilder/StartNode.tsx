@@ -43,10 +43,10 @@ const StartNode: React.FC<NodeProps> = ({ id, data, selected }) => {
         collapsed={cfg.note_collapsed}
       />
 
-      {/* 우측 Output Handle만 존재 (다음 노드로만 연결 가능) */}
+      {/* 하단 Output Handle만 존재 (다음 노드로만 연결 가능) */}
       <Handle
         type="source"
-        position={Position.Right}
+        position={Position.Bottom}
         id="source"
         className="!w-3.5 !h-3.5 !bg-emerald-500 !border-2 !border-slate-900 !z-20 transition-all hover:scale-125 hover:!bg-emerald-400 cursor-crosshair"
       />

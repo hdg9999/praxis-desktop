@@ -66,7 +66,8 @@ export const en: TranslationType = {
     multipleStartNodes: "There must be exactly one 'Start' node in the workflow.",
     noEndNode: "'End' node does not exist.",
     multipleEndNodes: "There must be exactly one 'End' node in the workflow.",
-    cycleDetected: 'An infinite loop (cycle) was detected in the workflow.',
+    cycleDetected: 'A loop (cycle path) is included in the workflow. Verify the exit condition if not an intentional monitoring loop.',
+    infiniteLoopNoEndWarning: "Infinite monitoring loop structure without an exit path to the 'End' node.",
     disconnectedStartEnd: "'Start' and 'End' nodes must be connected continuously.",
     cannotCompleteNoEnd: "Cannot complete workflow because 'End' node is missing.",
     orphanWarning: 'There are {count} disconnected orphan nodes. (Ignored during execution)',
@@ -222,6 +223,18 @@ export const en: TranslationType = {
     flow_call: {
       label: 'Call Sub-Workflow',
       desc: 'Invoke another saved workflow with isolated In/Out variable mappings',
+    },
+    flow_branch: {
+      label: 'Condition Branch (If / Else)',
+      desc: 'Branch into True or False path based on variable comparison, PC UI element, or web element existence',
+    },
+    flow_loop: {
+      label: 'Loop Execution (Repeat)',
+      desc: 'Repeat N times or run an infinite loop for 24-hour continuous monitoring',
+    },
+    flow_set_variable: {
+      label: 'Set / Modify Variable',
+      desc: 'Assign value (=), increment/decrement (+/-), append string, or toggle boolean on a declared variable',
     },
     browser_navigate: {
       label: 'Open Web / Navigate URL',

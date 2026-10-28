@@ -1099,6 +1099,52 @@ class PlaywrightService:
             return last_candidate
         return page.locator(sel).first
 
+    async def check_element_exists(
+        self,
+        selector_type: str = "auto",
+        selector: str = "",
+        iframe_auto_search: bool = True,
+        timeout_sec: float = 1.5,
+    ) -> bool:
+        """
+        현재 활성 웹페이지(및 중첩 iframe)에 지정된 선택자/텍스트 요소가 존재하는지 확인합니다.
+        제한시간(timeout_sec) 내에 감지되면 True, 미감지 또는 열린 브라우저가 없으면 False를 반환합니다.
+        """
+        sel = (selector or "").strip()
+        if not sel:
+            return False
+        if not self._is_context_alive():
+            return False
+        try:
+            page = await self.get_active_page()
+        except Exception:
+            return False
+
+        deadline = asyncio.get_event_loop().time() + max(0.1, float(timeout_sec))
+        while True:
+            frames = list(page.frames) if iframe_auto_search else [page.main_frame]
+            for frame in frames:
+                try:
+                    candidates = self._build_frame_candidates(frame, selector_type, sel)
+                    for loc in candidates:
+                        try:
+                            cnt = await loc.count()
+                            if cnt > 0:
+                                for idx in range(min(cnt, 5)):
+                                    if await loc.nth(idx).is_visible():
+                                        return True
+                                return True
+                        except Exception:
+                            continue
+                except Exception:
+                    continue
+
+            if asyncio.get_event_loop().time() >= deadline:
+                break
+            await asyncio.sleep(0.15)
+
+        return False
+
     async def click_element(
         self,
         selector_type: str = "auto",

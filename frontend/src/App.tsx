@@ -62,7 +62,7 @@ const INITIAL_NODES: Node[] = [
   {
     id: 'node_start',
     type: 'flow_start',
-    position: { x: 50, y: 150 },
+    position: { x: 360, y: 40 },
     deletable: false,
     data: {
       label: '시작',
@@ -73,7 +73,7 @@ const INITIAL_NODES: Node[] = [
   {
     id: 'node_1',
     type: 'general_delay',
-    position: { x: 260, y: 150 },
+    position: { x: 360, y: 160 },
     data: {
       label: '준비 대기 (1초)',
       type: 'general_delay',
@@ -83,7 +83,7 @@ const INITIAL_NODES: Node[] = [
   {
     id: 'node_2',
     type: 'ai_ollama',
-    position: { x: 520, y: 130 },
+    position: { x: 360, y: 290 },
     data: {
       label: '작업 브리핑 AI',
       type: 'ai_ollama',
@@ -98,7 +98,7 @@ const INITIAL_NODES: Node[] = [
   {
     id: 'node_3',
     type: 'general_clipboard_copy',
-    position: { x: 810, y: 150 },
+    position: { x: 360, y: 460 },
     data: {
       label: 'AI 결과 클립보드 복사',
       type: 'general_clipboard_copy',
@@ -108,7 +108,7 @@ const INITIAL_NODES: Node[] = [
   {
     id: 'node_end',
     type: 'flow_end',
-    position: { x: 1070, y: 150 },
+    position: { x: 360, y: 590 },
     deletable: false,
     data: {
       label: '끝',
@@ -287,6 +287,13 @@ export function App() {
               ...currentCfg,
               target_mode: 'object',
               object_data: objectData,
+            };
+          } else if (nodeData.type === 'flow_branch') {
+            updatedCfg = {
+              ...currentCfg,
+              condition_mode: 'ui_element_exists',
+              object_data: objectData,
+              confidence: objectData.confidence ?? 0.8,
             };
           } else {
             updatedCfg = {
@@ -545,8 +552,8 @@ export function App() {
               id: String(n.id || `node_${idx}`),
               type: resolvedType,
               position: {
-                x: typeof n.position?.x === 'number' && !Number.isNaN(n.position.x) ? n.position.x : idx * 200,
-                y: typeof n.position?.y === 'number' && !Number.isNaN(n.position.y) ? n.position.y : 150,
+                x: typeof n.position?.x === 'number' && !Number.isNaN(n.position.x) ? n.position.x : 360,
+                y: typeof n.position?.y === 'number' && !Number.isNaN(n.position.y) ? n.position.y : idx * 140,
               },
               data: {
                 ...rawData,
@@ -567,13 +574,13 @@ export function App() {
     const hasEnd = currentNodes.some((n) => n.type === 'flow_end');
 
     if (!hasStart) {
-      const minX = Math.min(...currentNodes.map((n) => n.position.x));
-      const avgY = currentNodes[0].position.y;
+      const minY = Math.min(...currentNodes.map((n) => n.position.y));
+      const firstX = currentNodes[0].position.x;
 
       const startNode: Node = {
         id: `node_start_${Date.now()}`,
         type: 'flow_start',
-        position: { x: Math.max(20, minX - 220), y: avgY },
+        position: { x: firstX, y: Math.max(20, minY - 130) },
         deletable: false,
         data: {
           label: '시작',
@@ -599,13 +606,13 @@ export function App() {
     }
 
     if (!hasEnd) {
-      const maxX = Math.max(...currentNodes.map((n) => n.position.x));
-      const lastY = currentNodes[currentNodes.length - 1].position.y;
+      const maxY = Math.max(...currentNodes.map((n) => n.position.y));
+      const lastX = currentNodes[currentNodes.length - 1].position.x;
 
       const endNode: Node = {
         id: `node_end_${Date.now()}`,
         type: 'flow_end',
-        position: { x: maxX + 280, y: lastY },
+        position: { x: lastX, y: maxY + 150 },
         deletable: false,
         data: {
           label: '끝',
@@ -1003,10 +1010,13 @@ export function App() {
         finalConfig.model = preferredModel;
       }
     }
+    const basePos = selectedNode
+      ? { x: selectedNode.position.x, y: selectedNode.position.y + 145 }
+      : { x: 360 + ((nodes.length % 3) * 20), y: 80 + (nodes.length * 110) };
     const newNode: Node = {
       id: `node_${Date.now()}`,
       type,
-      position: { x: 300 + (nodes.length * 30), y: 150 + (nodes.length * 20) },
+      position: basePos,
       data: {
         label,
         type,
@@ -1092,10 +1102,10 @@ export function App() {
               n.position.y >= groupNode.position.y &&
               n.position.y <= groupNode.position.y + gh;
             if (!insideAlready) {
-              const offsetX = childrenInGroup.length > 0
-                ? Math.max(...childrenInGroup.map((c) => c.position.x)) + 220
-                : groupNode.position.x + 30;
-              nextPos = { x: offsetX, y: groupNode.position.y + 75 };
+              const offsetY = childrenInGroup.length > 0
+                ? Math.max(...childrenInGroup.map((c) => c.position.y)) + 135
+                : groupNode.position.y + 75;
+              nextPos = { x: groupNode.position.x + 40, y: offsetY };
             }
           } else {
             delete nextCfg.group_id;
@@ -1136,12 +1146,12 @@ export function App() {
       const currWidth = Math.max(320, Number(currCfg.width) || 560);
       const currHeight = Math.max(180, Number(currCfg.height) || 260);
 
-      let nextX = groupX + 30;
+      let nextX = groupX + 40;
       let nextY = groupY + 75;
       if (childrenInGroup.length > 0) {
-        const maxRightX = Math.max(...childrenInGroup.map((c) => c.position.x));
-        nextX = maxRightX + 230;
-        nextY = childrenInGroup[childrenInGroup.length - 1].position.y;
+        const maxBottomY = Math.max(...childrenInGroup.map((c) => c.position.y));
+        nextX = childrenInGroup[childrenInGroup.length - 1].position.x;
+        nextY = maxBottomY + 135;
       }
 
       const finalConfig: Record<string, any> = {
@@ -1168,7 +1178,8 @@ export function App() {
         },
       };
 
-      const neededWidth = Math.max(currWidth, (nextX - groupX) + 250);
+      const neededWidth = Math.max(currWidth, (nextX - groupX) + 270);
+      const neededHeight = Math.max(currHeight, (nextY - groupY) + 150);
       const updated = prevNodes.map((n) => {
         if (n.id === groupId) {
           const updatedGroup = {
@@ -1179,7 +1190,7 @@ export function App() {
                 ...currCfg,
                 collapsed: false,
                 width: neededWidth,
-                height: currHeight,
+                height: neededHeight,
               },
             },
           };

@@ -3,6 +3,9 @@ export type NodeType =
   | 'flow_end'
   | 'flow_group'
   | 'flow_call'
+  | 'flow_branch'
+  | 'flow_loop'
+  | 'flow_set_variable'
   | 'general_mouse_click'
   | 'general_mouse_move'
   | 'general_mouse_drag'
@@ -124,6 +127,8 @@ export interface WorkflowSettings {
   execution_delay: number;
   default_llm_model: string;
   default_num_ctx?: number;
+  max_total_steps?: number;
+  unlimited_steps?: boolean;
   global_error_handler?: GlobalErrorHandlerConfig;
 }
 

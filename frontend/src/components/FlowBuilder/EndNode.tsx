@@ -22,10 +22,10 @@ const EndNode: React.FC<NodeProps> = ({ id, data, selected }) => {
           : 'border-rose-700/60 hover:border-rose-500/70 bg-gradient-to-r from-slate-900 to-rose-950/40'
       }`}
     >
-      {/* 좌측 Input Handle만 존재 (이전 노드에서 들어오는 것만 가능) */}
+      {/* 상단 Input Handle만 존재 (이전 노드에서 들어오는 것만 가능) */}
       <Handle
         type="target"
-        position={Position.Left}
+        position={Position.Top}
         id="target"
         className="!w-3.5 !h-3.5 !bg-rose-500 !border-2 !border-slate-900 !z-20 transition-all hover:scale-125 hover:!bg-rose-400 cursor-crosshair"
       />

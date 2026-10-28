@@ -1111,10 +1111,15 @@ def build_self_healing_agent_node(
     session_logs: List[Dict[str, Any]],
     handler_config: Dict[str, Any],
     flow_settings: Dict[str, Any],
+    executed_trajectory: Optional[List[str]] = None,
+    downstream_lookahead: Optional[str] = None,
 ) -> AgentNode:
     """
     워크플로우 전역 설정의 '오류 복구 AI 에이전트(Self-Healing Agent)' 설정과
     런타임 오류 발생 맥락을 결합하여 즉시 실행 가능한 AgentNode 인스턴스를 생성합니다.
+    - 복잡한 분기(If/Else) 및 반복(Loop) 그래프 환경에서도 소형 LLM의 추론력이 저하되지 않도록
+      선택되지 않은 분기 노드는 배제하고 '실제 실행된 과거 선형 궤적(executed_trajectory)'과
+      '오류 노드 직후 예정된 후속 경로(downstream_lookahead)'를 구분하여 명확하게 주입합니다.
     """
     digest = sanitize_failed_node_digest(failed_node_data)
     failed_type = digest["node_type"]
@@ -1127,21 +1132,33 @@ def build_self_healing_agent_node(
         else "(별도 파라미터 없음)"
     )
 
-    # 전체 워크플로우 단계 개요 및 현재 오류 발생 지점 표시
-    step_labels: List[str] = []
-    for n in ordered_nodes:
-        nt = n.get("type", "")
-        if nt in ("flow_start", "flow_end", "flow_group"):
-            continue
-        nid = n.get("id", "")
-        lbl = (n.get("data", {}) or {}).get("label", nid)
-        if nid == failed_id:
-            step_labels.append(f"🚨[{lbl}(오류발생)]")
-        else:
-            step_labels.append(lbl)
-    flow_chain_str = " ➔ ".join(step_labels[:15])
-    if len(step_labels) > 15:
-        flow_chain_str += f" ... (총 {len(step_labels)}개 스텝)"
+    # 1) 실제 실행된 과거 선형 경로 (Executed Trajectory Linearization)
+    if executed_trajectory:
+        recent_traj = executed_trajectory[-12:]
+        prefix = f"... (이전 {len(executed_trajectory) - 12}단계 생략) ➔ " if len(executed_trajectory) > 12 else ""
+        flow_chain_str = f"{prefix}{' ➔ '.join(recent_traj)} ➔ 🚨[{failed_name}(현재 오류발생)]"
+    else:
+        step_labels: List[str] = []
+        for n in ordered_nodes:
+            nt = n.get("type", "")
+            if nt in ("flow_start", "flow_end", "flow_group"):
+                continue
+            nid = n.get("id", "")
+            lbl = (n.get("data", {}) or {}).get("label", nid)
+            if nid == failed_id:
+                step_labels.append(f"🚨[{lbl}(오류발생)]")
+            else:
+                step_labels.append(lbl)
+        flow_chain_str = " ➔ ".join(step_labels[:15])
+        if len(step_labels) > 15:
+            flow_chain_str += f" ... (총 {len(step_labels)}개 스텝)"
+
+    # 2) 복구 완료 후 직후 이어질 다음 예정 단계 (Downstream Lookahead)
+    lookahead_line = (
+        f"- 복구 후 직후 예정 단계 (Downstream Lookahead): {downstream_lookahead}\n"
+        if downstream_lookahead
+        else ""
+    )
 
     # 런타임 로드 스킬셋 구성 (오류 발생 노드 기본 스킬 자동 포함 + 사용자 추가 허용 스킬)
     auto_default_skills = get_default_skills_for_failed_node(failed_type)
@@ -1177,7 +1194,8 @@ def build_self_healing_agent_node(
         f"1. 현재 워크플로우 개요:\n"
         f"- 워크플로우 이름: {flow_name or '이름 없음'}\n"
         f"- 워크플로우 설명: {flow_description or '(설명 없음)'}\n"
-        f"- 전체 진행 경로: {flow_chain_str}\n\n"
+        f"- 실제 실행 진행 경로 (선형 궤적): {flow_chain_str}\n"
+        f"{lookahead_line}\n"
         f"2. 오류가 발생한 스킬 노드 제반 정보:\n"
         f"- 노드 이름(ID): {failed_name} ({failed_id})\n"
         f"- 노드 유형: {failed_type}\n"

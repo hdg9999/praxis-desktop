@@ -16,6 +16,8 @@ SYSTEM_VARIABLE_NAMES: Set[str] = {
     "last_error_node_id",
     "last_error_node_name",
     "retry_count",
+    "loop_index",
+    "branch_result",
 }
 
 VALID_VARIABLE_NAME_RE = re.compile(r"^[a-zA-Z_\uAC00-\uD7A3][a-zA-Z0-9_\uAC00-\uD7A3]*$")
@@ -118,6 +120,7 @@ class NodeResult(BaseModel):
     output: Any = None
     error: Optional[str] = None
     screenshot_url: Optional[str] = None
+    next_handle: Optional[str] = None
 
 
 class ExecutionContext:
@@ -130,8 +133,10 @@ class ExecutionContext:
     call_stack_names: List[str] = []
     max_call_depth: int = 5
     step_counter: Dict[str, int] = {}
-    max_total_steps: int = 500
+    max_total_steps: int = 1000
     session_logs: List[Dict[str, Any]] = []
+    loop_states: Dict[str, int] = {}
+    executed_trajectory: List[str] = []
 
     def __init__(
         self,
@@ -146,8 +151,10 @@ class ExecutionContext:
         call_stack_names: Optional[List[str]] = None,
         max_call_depth: int = 5,
         step_counter: Optional[Dict[str, int]] = None,
-        max_total_steps: int = 500,
+        max_total_steps: int = 1000,
         session_logs: Optional[List[Dict[str, Any]]] = None,
+        loop_states: Optional[Dict[str, int]] = None,
+        executed_trajectory: Optional[List[str]] = None,
     ):
         self.session_id = session_id
         self.event_callback = event_callback
@@ -162,6 +169,8 @@ class ExecutionContext:
         self.step_counter: Dict[str, int] = step_counter if step_counter is not None else {"count": 0}
         self.max_total_steps: int = max_total_steps
         self.session_logs: List[Dict[str, Any]] = session_logs if session_logs is not None else []
+        self.loop_states: Dict[str, int] = loop_states if loop_states is not None else {}
+        self.executed_trajectory: List[str] = executed_trajectory if executed_trajectory is not None else []
 
         # 1. 선언된 변수 스키마가 있으면 기본값(defaultValue)을 타입 정규화하여 초기화
         for var_name, schema in self.variable_schemas.items():
@@ -178,13 +187,23 @@ class ExecutionContext:
                     self.variables[k] = v
 
     def increment_and_check_step_limit(self) -> None:
-        """세션 전체(서브 워크플로우 포함) 누적 실행 스텝 수를 증가시키고 한계 초과 시 예외를 발생시킵니다."""
+        """
+        세션 전체(서브 워크플로우 포함) 누적 실행 스텝 수를 증가시키고 한계 초과 시 예외를 발생시킵니다.
+        max_total_steps <= 0 또는 flow_settings.unlimited_steps == True 인 경우(24시간 상시 모니터링 모드)는 제한하지 않습니다.
+        """
         self.step_counter["count"] = self.step_counter.get("count", 0) + 1
-        if self.step_counter["count"] > self.max_total_steps:
+        unlimited = bool(self.flow_settings.get("unlimited_steps", False)) or (self.max_total_steps <= 0)
+        if not unlimited and self.step_counter["count"] > self.max_total_steps:
             raise RuntimeError(
                 f"세션당 최대 누적 노드 실행 횟수({self.max_total_steps}회)를 초과하여 안전을 위해 실행을 강제 중단했습니다. "
-                f"(과도한 서브 워크플로우 연쇄 호출 또는 반복 실행 감지)"
+                f"(24시간 상시 모니터링 등 장기 반복이 필요한 경우 '워크플로우 설정'에서 무제한 반복 모드를 활성화하세요.)"
             )
+
+    def record_trajectory(self, entry: str, max_items: int = 30) -> None:
+        """실제 실행된 노드 및 분기 선택 경로를 슬라이딩 윈도우 형태로 기록합니다."""
+        self.executed_trajectory.append(entry)
+        if len(self.executed_trajectory) > max_items:
+            del self.executed_trajectory[:-max_items]
 
     def is_cancelled(self) -> bool:
         return self.check_cancelled()

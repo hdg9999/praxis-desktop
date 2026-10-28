@@ -20,6 +20,8 @@ import StartNode from './StartNode';
 import EndNode from './EndNode';
 import GroupNode from './GroupNode';
 import SubflowNode from './SubflowNode';
+import BranchNode from './BranchNode';
+import LoopNode from './LoopNode';
 import DeletableEdge from './DeletableEdge';
 import { checkConnectionValidity } from '../../utils/flowValidator';
 import { NodeType } from '../../types';
@@ -58,6 +60,9 @@ export const FlowCanvas: React.FC<FlowCanvasProps> = ({
     flow_end: EndNode,
     flow_group: GroupNode,
     flow_call: SubflowNode,
+    flow_branch: BranchNode,
+    flow_loop: LoopNode,
+    flow_set_variable: GeneralNode,
     general_mouse_click: GeneralNode,
     general_mouse_move: GeneralNode,
     general_mouse_drag: GeneralNode,
@@ -176,13 +181,13 @@ export const FlowCanvas: React.FC<FlowCanvasProps> = ({
       const currWidth = Math.max(320, Number(currCfg.width) || 560);
       const currHeight = Math.max(180, Number(currCfg.height) || 260);
 
-      // 그룹 내 기존 자식 노드들 우측에 순차 배치
-      let nextX = groupX + 30;
+      // 그룹 내 기존 자식 노드들 하단에 순차 배치 (상->하 레이아웃)
+      let nextX = groupX + 40;
       let nextY = groupY + 75;
       if (childrenInGroup.length > 0) {
-        const maxRightX = Math.max(...childrenInGroup.map((c) => c.position.x));
-        nextX = maxRightX + 230;
-        nextY = childrenInGroup[childrenInGroup.length - 1].position.y;
+        const maxBottomY = Math.max(...childrenInGroup.map((c) => c.position.y));
+        nextX = childrenInGroup[childrenInGroup.length - 1].position.x;
+        nextY = maxBottomY + 135;
       }
 
       const finalConfig: Record<string, any> = {
@@ -205,8 +210,9 @@ export const FlowCanvas: React.FC<FlowCanvasProps> = ({
         },
       };
 
-      // 새로 추가된 노드가 그룹 가로 폭을 넘어설 경우 그룹 박스를 자동으로 넓혀줌
-      const neededWidth = Math.max(currWidth, (nextX - groupX) + 250);
+      // 새로 추가된 노드가 그룹 세로 높이를 넘어설 경우 그룹 박스를 자동으로 늘려줌
+      const neededWidth = Math.max(currWidth, (nextX - groupX) + 270);
+      const neededHeight = Math.max(currHeight, (nextY - groupY) + 150);
       const updatedNodes = prevNodes.map((n) => {
         if (n.id === groupId) {
           return {
@@ -217,7 +223,7 @@ export const FlowCanvas: React.FC<FlowCanvasProps> = ({
                 ...currCfg,
                 collapsed: false,
                 width: neededWidth,
-                height: currHeight,
+                height: neededHeight,
               },
             },
           };
@@ -256,7 +262,7 @@ export const FlowCanvas: React.FC<FlowCanvasProps> = ({
 
   const renderedNodes = useMemo(() => {
     // 그룹별 자식 노드 요약 계산
-    const childrenByGroup = new Map<string, { id: string; label: string; type: string; x: number }[]>();
+    const childrenByGroup = new Map<string, { id: string; label: string; type: string; x: number; y: number }[]>();
     for (const n of nodes) {
       if (n.type === 'flow_group') continue;
       const gId = (n.data as any)?.config?.group_id;
@@ -267,11 +273,12 @@ export const FlowCanvas: React.FC<FlowCanvasProps> = ({
           label: String((n.data as any)?.label || n.id),
           type: String(n.type || ''),
           x: n.position?.x || 0,
+          y: n.position?.y || 0,
         });
       }
     }
     for (const list of childrenByGroup.values()) {
-      list.sort((a, b) => a.x - b.x);
+      list.sort((a, b) => a.y - b.y || a.x - b.x);
     }
 
     // 그룹 노드가 일반 노드보다 항상 뒤(아래 레이어)에 렌더링되도록 정렬
@@ -386,14 +393,24 @@ export const FlowCanvas: React.FC<FlowCanvasProps> = ({
     if (onSnapshot) {
       onSnapshot(nodes, edges);
     }
+    const handleKey = String(params.sourceHandle || '').toLowerCase();
+    const colorMap: Record<string, string> = {
+      true: '#10b981',
+      false: '#f43f5e',
+      loop: '#06b6d4',
+      exit: '#8b5cf6',
+    };
+    const strokeColor = colorMap[handleKey] || '#3b82f6';
+
     setEdges((eds) => addEdge({
       ...params,
       type: 'deletable',
       animated: true,
-      style: { stroke: '#3b82f6', strokeWidth: 2 },
+      style: { stroke: strokeColor, strokeWidth: 2 },
+      data: { sourceHandle: params.sourceHandle },
       markerEnd: {
         type: MarkerType.ArrowClosed,
-        color: '#3b82f6',
+        color: strokeColor,
       },
     }, eds));
   }, [nodes, edges, setEdges, onSnapshot]);

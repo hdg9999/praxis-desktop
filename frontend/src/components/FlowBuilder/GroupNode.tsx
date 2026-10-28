@@ -218,10 +218,10 @@ const GroupNode: React.FC<NodeProps> = ({ id, data, selected }) => {
           </button>
         )}
 
-        {/* 접힌 상태에서 외부 간선 브릿지 표시용 좌/우 Handle */}
+        {/* 접힌 상태에서 외부 간선 브릿지 표시용 상/하 Handle */}
         <Handle
           type="target"
-          position={Position.Left}
+          position={Position.Top}
           id="target"
           className="!w-3 !h-3 !bg-teal-400 !border-2 !border-slate-900 !z-20 !pointer-events-none"
         />
@@ -330,7 +330,7 @@ const GroupNode: React.FC<NodeProps> = ({ id, data, selected }) => {
 
         <Handle
           type="source"
-          position={Position.Right}
+          position={Position.Bottom}
           id="source"
           className="!w-3 !h-3 !bg-teal-400 !border-2 !border-slate-900 !z-20 !pointer-events-none"
         />

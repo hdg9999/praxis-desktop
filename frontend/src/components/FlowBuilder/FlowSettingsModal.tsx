@@ -78,6 +78,8 @@ export const FlowSettingsModal: React.FC<FlowSettingsModalProps> = ({
   const [executionDelay, setExecutionDelay] = useState<number>(settings.execution_delay ?? 0.3);
   const [defaultLlmModel, setDefaultLlmModel] = useState<string>(settings.default_llm_model ?? '');
   const [defaultNumCtx, setDefaultNumCtx] = useState<number>(settings.default_num_ctx ?? 8192);
+  const [maxTotalSteps, setMaxTotalSteps] = useState<number>(settings.max_total_steps ?? 1000);
+  const [unlimitedSteps, setUnlimitedSteps] = useState<boolean>(Boolean(settings.unlimited_steps));
   const [applyToExisting, setApplyToExisting] = useState(false);
 
   // 전역 오류 발생 시 처리 (Global Error Handler) 상태
@@ -131,6 +133,14 @@ export const FlowSettingsModal: React.FC<FlowSettingsModalProps> = ({
           ? settings.default_num_ctx
           : 8192
       );
+      setMaxTotalSteps(
+        typeof settings.max_total_steps === 'number' &&
+          !isNaN(settings.max_total_steps) &&
+          settings.max_total_steps > 0
+          ? settings.max_total_steps
+          : 1000
+      );
+      setUnlimitedSteps(Boolean(settings.unlimited_steps));
       setApplyToExisting(false);
 
       const eh = settings.global_error_handler;
@@ -183,6 +193,8 @@ export const FlowSettingsModal: React.FC<FlowSettingsModalProps> = ({
         execution_delay: Number(safeDelay.toFixed(2)),
         default_llm_model: defaultLlmModel.trim(),
         default_num_ctx: Math.max(1024, Math.min(131072, Number(defaultNumCtx) || 8192)),
+        max_total_steps: Math.max(50, Math.min(1000000, Number(maxTotalSteps) || 1000)),
+        unlimited_steps: unlimitedSteps,
         global_error_handler: {
           mode: errorMode,
           error_subflow_id: errorSubflowId.trim(),
@@ -430,6 +442,77 @@ export const FlowSettingsModal: React.FC<FlowSettingsModalProps> = ({
 
             <p className="text-[10px] text-slate-400 leading-relaxed">
               {t('flowSettings.defaultNumCtxHelp')}
+            </p>
+          </div>
+
+          {/* 5-2. 반복 루프 안전 가드레일 & 24시간 상시 모니터링 모드 */}
+          <div className="p-3.5 rounded-xl bg-slate-950/70 border border-slate-800 space-y-2.5">
+            <div className="flex items-center justify-between">
+              <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-200">
+                <RefreshCw className="w-3.5 h-3.5 text-violet-400" />
+                <span>
+                  {isEn
+                    ? 'Max Execution Steps & 24h Monitoring Mode'
+                    : '최대 누적 실행 스텝 제한 (루프 안전장치 & 24시간 모니터링)'}
+                </span>
+              </label>
+              <span className="text-xs font-mono font-bold text-violet-300 bg-violet-950/50 border border-violet-800/60 px-2 py-0.5 rounded-lg">
+                {unlimitedSteps
+                  ? isEn
+                    ? '♾️ Unlimited'
+                    : '♾️ 무제한 (모니터링)'
+                  : `${maxTotalSteps.toLocaleString()} steps`}
+              </span>
+            </div>
+
+            {!unlimitedSteps && (
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  min="50"
+                  max="1000000"
+                  step="100"
+                  value={maxTotalSteps}
+                  onChange={(e) => setMaxTotalSteps(Math.max(50, Number(e.target.value) || 1000))}
+                  className="w-32 px-3 py-1.5 text-xs font-mono text-right bg-slate-900 border border-violet-800/60 rounded-lg text-violet-200 focus:outline-none focus:border-violet-500"
+                />
+                <div className="flex items-center gap-1 flex-1 overflow-x-auto py-0.5">
+                  {[500, 1000, 5000, 10000].map((limit) => (
+                    <button
+                      key={limit}
+                      type="button"
+                      onClick={() => setMaxTotalSteps(limit)}
+                      className={`px-2 py-1 text-[11px] font-mono rounded-lg transition-colors shrink-0 ${
+                        maxTotalSteps === limit
+                          ? 'bg-violet-600/30 text-violet-300 border border-violet-500/60 font-semibold'
+                          : 'bg-slate-900 text-slate-400 border border-slate-800 hover:text-slate-200 hover:bg-slate-800'
+                      }`}
+                    >
+                      {limit.toLocaleString()}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <label className="flex items-center gap-2 pt-1 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={unlimitedSteps}
+                onChange={(e) => setUnlimitedSteps(e.target.checked)}
+                className="rounded bg-slate-900 border-slate-700 text-violet-500 focus:ring-0 w-3.5 h-3.5 cursor-pointer"
+              />
+              <span className="text-[11px] text-violet-200 font-medium">
+                {isEn
+                  ? 'Allow Unlimited Steps (24-Hour Continuous Monitoring Loop Mode)'
+                  : '무제한 반복 스텝 허용 (24시간 상시 모니터링 무한루프 워크플로우용)'}
+              </span>
+            </label>
+
+            <p className="text-[10px] text-slate-400 leading-relaxed">
+              {isEn
+                ? 'Prevents unintended infinite loops by stopping execution when total steps exceed the limit. Enable Unlimited mode for 24-hour monitoring workflows (memory & screenshot auto-rotation stays active).'
+                : '실수로 탈출 조건이 없는 무한루프를 작성했을 때 지정한 스텝 수 도달 시 안전하게 자동 중단합니다. 24시간 상시 모니터링 목적의 워크플로우에서는 무제한 모드를 체크하세요 (로그/스크린샷 메모리 자동 순환 보호 적용됨).'}
             </p>
           </div>
 

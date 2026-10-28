@@ -41,6 +41,8 @@ import {
   AlertCircle,
   FolderKanban,
   GitBranchPlus,
+  GitFork,
+  Repeat,
   Workflow,
   ArrowRight,
   ArrowLeft,
@@ -136,6 +138,9 @@ export const PropertyInspector: React.FC<PropertyInspectorProps> = ({
   const isEnd = nodeData.type === 'flow_end';
   const isGroup = nodeData.type === 'flow_group';
   const isSubflow = nodeData.type === 'flow_call';
+  const isBranch = nodeData.type === 'flow_branch';
+  const isLoop = nodeData.type === 'flow_loop';
+  const isSetVariable = nodeData.type === 'flow_set_variable';
   const isMarker = isStart || isEnd;
   const subtype = (nodeData.type || '').replace('general_', '');
   const isAi = nodeData.type === 'ai_ollama';
@@ -235,6 +240,16 @@ export const PropertyInspector: React.FC<PropertyInspectorProps> = ({
           { key: 'prompt', label: isEn ? 'Prompt' : '지시 프롬프트' },
           { key: 'system_prompt', label: isEn ? 'System Prompt' : '시스템 프롬프트' },
         ];
+      case 'flow_branch':
+        return [
+          { key: 'left_value', label: isEn ? 'Left Value / Variable' : '비교 좌변 값/변수' },
+          { key: 'right_value', label: isEn ? 'Right Value' : '비교 우변 값' },
+          { key: 'selector', label: isEn ? 'Web Selector' : '웹 요소 선택자' },
+        ];
+      case 'flow_loop':
+        return [{ key: 'loop_count', label: isEn ? 'Loop Count' : '반복 횟수' }];
+      case 'flow_set_variable':
+        return [{ key: 'value', label: isEn ? 'Value to Set / Add' : '설정/연산할 값' }];
       default:
         return [];
     }
@@ -654,6 +669,10 @@ export const PropertyInspector: React.FC<PropertyInspectorProps> = ({
               nextCfg.selector = elem.css_selector || elem.xpath;
             } else if (targetNodeType === 'browser_action') {
               nextCfg[targetFieldKey] = elem.recommended_selector || elem.css_selector;
+            } else if (targetNodeType === 'flow_branch') {
+              nextCfg.condition_mode = 'web_element_exists';
+              nextCfg.selector_type = elem.recommended_type || 'css';
+              nextCfg.selector = elem.recommended_selector || elem.css_selector;
             } else {
               nextCfg[targetFieldKey] = elem.recommended_selector || elem.css_selector;
             }
@@ -940,6 +959,9 @@ export const PropertyInspector: React.FC<PropertyInspectorProps> = ({
           {subtype === 'kill_process' && <Ban className="w-4 h-4 text-rose-500" />}
           {isGroup && <FolderKanban className="w-4 h-4 text-teal-400" />}
           {isSubflow && <GitBranchPlus className="w-4 h-4 text-cyan-400" />}
+          {isBranch && <GitFork className="w-4 h-4 text-amber-400" />}
+          {isLoop && <Repeat className="w-4 h-4 text-violet-400" />}
+          {isSetVariable && <Variable className="w-4 h-4 text-emerald-400" />}
           <h2 className="text-sm font-semibold text-slate-200">
             {isStart
               ? (isEn ? 'Start Node Properties' : '시작 노드 속성')
@@ -949,6 +971,12 @@ export const PropertyInspector: React.FC<PropertyInspectorProps> = ({
               ? (isEn ? 'Group Node Properties' : '그룹 노드 속성')
               : isSubflow
               ? (isEn ? 'Sub-Workflow Call Properties' : '다른 워크플로우 호출 속성')
+              : isBranch
+              ? (isEn ? 'Condition Branch Properties' : '조건 분기 (If/Else) 속성')
+              : isLoop
+              ? (isEn ? 'Loop Node Properties' : '반복 실행 (Loop) 속성')
+              : isSetVariable
+              ? (isEn ? 'Set Variable Properties' : '변수 값 설정/연산 속성')
               : isAgent
               ? (isEn ? 'Agent Properties' : '기본 에이전트 속성')
               : t('inspector.title')}
@@ -1161,8 +1189,8 @@ export const PropertyInspector: React.FC<PropertyInspectorProps> = ({
               </div>
               <p className="text-[11px] text-slate-400 leading-relaxed">
                 {isEn
-                  ? 'Entry point of the workflow. Execution starts here and flows sequentially along edges.'
-                  : '전체 자동화 워크플로우의 실행 진입점입니다. 모든 동작은 이 노드에서 출발하여 오른쪽 간선으로 연결된 다음 노드로 순차 실행됩니다.'}
+                  ? 'Entry point of the workflow. Execution starts here and flows sequentially downward along edges.'
+                  : '전체 자동화 워크플로우의 실행 진입점입니다. 모든 동작은 이 노드에서 출발하여 아래쪽 간선으로 연결된 다음 노드로 순차 실행됩니다.'}
               </p>
               <div className="text-[10px] text-emerald-400/90 bg-emerald-950/60 px-2.5 py-1.5 rounded-lg border border-emerald-800/50 font-medium">
                 {isEn ? '🔒 Cannot delete start node for safety.' : '🔒 안전을 위해 이 노드는 삭제할 수 없습니다.'}
@@ -5543,6 +5571,529 @@ export const PropertyInspector: React.FC<PropertyInspectorProps> = ({
                         : '최대 중첩 호출 깊이(5단계) 및 세션당 누적 실행(500스텝) 제한'}
                     </li>
                   </ul>
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* 9. 조건 분기 노드 (flow_branch) */}
+          {isBranch && (() => {
+            const condMode = String(cfg.condition_mode || 'variable').trim().toLowerCase();
+            const operator = String(cfg.operator || 'equals').trim().toLowerCase();
+            const unaryOps = new Set(['is_empty', 'is_not_empty', 'is_true', 'is_false']);
+
+            return (
+              <div className="space-y-4">
+                {/* 1) 조건 판별 모드 선택 */}
+                <div>
+                  <label className="text-[11px] font-semibold text-amber-300 block mb-1.5">
+                    {isEn ? 'Condition Evaluation Mode' : '조건 판별 기준 (3가지 모드)'}
+                  </label>
+                  <div className="grid grid-cols-3 gap-1 p-1 bg-slate-950 rounded-xl border border-slate-800">
+                    <button
+                      type="button"
+                      onClick={() => handleConfigChange('condition_mode', 'variable')}
+                      className={`py-1.5 px-1 text-[10px] rounded-lg font-semibold transition-all ${
+                        condMode === 'variable'
+                          ? 'bg-amber-600 text-white shadow'
+                          : 'text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      {isEn ? 'Variable/Value' : '🔢 변수/값 비교'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleConfigChange('condition_mode', 'ui_element_exists')}
+                      className={`py-1.5 px-1 text-[10px] rounded-lg font-semibold transition-all ${
+                        condMode === 'ui_element_exists'
+                          ? 'bg-amber-600 text-white shadow'
+                          : 'text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      {isEn ? 'PC UI Exists' : '🎯 PC UI 존재'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleConfigChange('condition_mode', 'web_element_exists')}
+                      className={`py-1.5 px-1 text-[10px] rounded-lg font-semibold transition-all ${
+                        condMode === 'web_element_exists'
+                          ? 'bg-amber-600 text-white shadow'
+                          : 'text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      {isEn ? 'Web Element' : '🌐 웹 요소 존재'}
+                    </button>
+                  </div>
+                </div>
+
+                {/* 모드 A: 변수 / 값 비교 */}
+                {condMode === 'variable' && (
+                  <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-3">
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="text-[11px] text-slate-300 font-medium">
+                          {isEn ? 'Left Operand (Variable or Text)' : '비교할 대상 (좌변: 변수 또는 값)'}
+                        </label>
+                        <select
+                          value=""
+                          onChange={(e) => {
+                            if (e.target.value) {
+                              handleConfigChange('left_value', `{{${e.target.value}}}`);
+                            }
+                          }}
+                          className="px-1.5 py-0.5 text-[10px] bg-slate-900 border border-slate-700 rounded text-emerald-300 font-mono focus:outline-none"
+                        >
+                          <option value="">
+                            {isEn ? '+ Select Variable' : '+ 변수 빠른 선택'}
+                          </option>
+                          {variables.map((v) => (
+                            <option key={v.name} value={v.name}>
+                              {`{{${v.name}}}`} ({v.type})
+                            </option>
+                          ))}
+                          {SYSTEM_VARIABLES.map((sv) => (
+                            <option key={sv.name} value={sv.name}>
+                              {`{{${sv.name}}}`} (시스템)
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <input
+                        type="text"
+                        data-config-key="left_value"
+                        value={cfg.left_value ?? ''}
+                        onChange={(e) => handleConfigChange('left_value', e.target.value)}
+                        placeholder={isEn ? 'e.g. {{last_output}} or {{count}}' : '예: {{last_output}}, {{count}}'}
+                        className="w-full px-2.5 py-1.5 text-xs bg-slate-900 border border-slate-700 rounded-lg text-amber-200 font-mono focus:outline-none focus:border-amber-500"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="text-[11px] text-slate-300 font-medium block mb-1">
+                        {isEn ? 'Comparison Operator' : '비교 연산자'}
+                      </label>
+                      <select
+                        value={operator}
+                        onChange={(e) => handleConfigChange('operator', e.target.value)}
+                        className="w-full px-2.5 py-1.5 text-xs bg-slate-900 border border-slate-700 rounded-lg text-slate-200 focus:outline-none focus:border-amber-500"
+                      >
+                        <option value="equals">== (같음 / Equals)</option>
+                        <option value="not_equals">!= (다름 / Not Equals)</option>
+                        <option value="contains">포함함 (Contains)</option>
+                        <option value="not_contains">포함하지 않음 (Not Contains)</option>
+                        <option value="starts_with">특정 문자로 시작 (Starts With)</option>
+                        <option value="ends_with">특정 문자로 끝남 (Ends With)</option>
+                        <option value="greater_than">&gt; (보다 큼 / 숫자 비교)</option>
+                        <option value="greater_or_equal">&gt;= (이상 / 숫자 비교)</option>
+                        <option value="less_than">&lt; (보다 작음 / 숫자 비교)</option>
+                        <option value="less_or_equal">&lt;= (이하 / 숫자 비교)</option>
+                        <option value="is_empty">비어 있음 (Is Empty)</option>
+                        <option value="is_not_empty">값이 존재함 (Is Not Empty)</option>
+                        <option value="is_true">참(True) 여부 (Is True)</option>
+                        <option value="is_false">거짓(False) 여부 (Is False)</option>
+                        <option value="regex">정규표현식 일치 (Regex Match)</option>
+                      </select>
+                    </div>
+
+                    {!unaryOps.has(operator) && (
+                      <div>
+                        <label className="text-[11px] text-slate-300 font-medium block mb-1">
+                          {isEn ? 'Right Operand (Target Value)' : '비교 기준값 (우변: 값 또는 {{변수}})'}
+                        </label>
+                        <input
+                          type="text"
+                          data-config-key="right_value"
+                          value={cfg.right_value ?? ''}
+                          onChange={(e) => handleConfigChange('right_value', e.target.value)}
+                          placeholder={isEn ? 'e.g. 성공, 10, true' : '예: 성공, 10, true, {{기준변수}}'}
+                          className="w-full px-2.5 py-1.5 text-xs bg-slate-900 border border-slate-700 rounded-lg text-slate-200 font-mono focus:outline-none focus:border-amber-500"
+                        />
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* 모드 B: PC 화면 UI 오브젝트 존재 여부 */}
+                {condMode === 'ui_element_exists' && (
+                  <div className="space-y-3">
+                    {cfg.object_data ? (
+                      <div className="p-3 bg-slate-950 rounded-xl border border-slate-800 space-y-2.5">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] font-semibold text-amber-400 flex items-center gap-1">
+                            <Crosshair className="w-3.5 h-3.5" />
+                            {isEn ? 'Target UI Object' : '탐색할 대상 UI 오브젝트'}
+                          </span>
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={onOpenObjectPicker}
+                              className="text-[10px] text-slate-300 hover:text-white px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 transition-colors flex items-center gap-1"
+                            >
+                              <RotateCcw className="w-2.5 h-2.5" />
+                              {isEn ? 'Reselect' : '다시 선택'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleConfigChange('object_data', null)}
+                              className="text-[10px] text-rose-400 hover:text-rose-300 px-1.5 py-0.5 rounded bg-rose-950/40"
+                            >
+                              {isEn ? 'Remove' : '제거'}
+                            </button>
+                          </div>
+                        </div>
+
+                        {(cfg.object_data.base64_image || cfg.object_data.image_url) && (
+                          <div className="rounded-lg bg-slate-900 border border-slate-800 p-2 flex items-center justify-center max-h-[100px] overflow-hidden">
+                            <img
+                              src={cfg.object_data.base64_image || resolveImageUrl(cfg.object_data.image_url)}
+                              alt="UI Object"
+                              className="max-h-[85px] max-w-full object-contain rounded"
+                            />
+                          </div>
+                        )}
+
+                        <div className="text-xs text-slate-200 font-medium truncate">
+                          {cfg.object_data.name || cfg.object_data.window_title || 'UI Object'}
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2 pt-1 border-t border-slate-800">
+                          <div>
+                            <label className="text-[10px] text-slate-400 block mb-1">
+                              {isEn ? 'Search Mode' : '탐색 방식'}
+                            </label>
+                            <select
+                              value={cfg.search_mode || 'hybrid'}
+                              onChange={(e) => handleConfigChange('search_mode', e.target.value)}
+                              className="w-full px-2 py-1 text-xs bg-slate-900 border border-slate-700 rounded text-slate-200"
+                            >
+                              <option value="hybrid">하이브리드 (UIA+이미지)</option>
+                              <option value="uia_only">UIA 객체 전용</option>
+                              <option value="image_only">이미지 매칭 전용</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="text-[10px] text-slate-400 block mb-1">
+                              {isEn ? 'Wait Timeout (sec)' : '탐색 대기 시간(초)'}
+                            </label>
+                            <input
+                              type="number"
+                              min="0.2"
+                              max="60"
+                              step="0.5"
+                              value={cfg.timeout ?? 1.5}
+                              onChange={(e) =>
+                                handleConfigChange('timeout', Math.max(0.2, Number(e.target.value) || 1.5))
+                              }
+                              className="w-full px-2 py-1 text-xs bg-slate-900 border border-slate-700 rounded text-slate-200 font-mono"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="p-3 bg-slate-950 rounded-xl border border-dashed border-slate-700 text-center space-y-2.5">
+                        <p className="text-[11px] text-slate-400">
+                          {isEn
+                            ? 'Pick a UI element or popup on screen to check if it exists.'
+                            : '화면에 나타났는지 확인할 팝업·버튼 등 UI 오브젝트를 선택해 주세요.'}
+                        </p>
+                        <button
+                          type="button"
+                          onClick={onOpenObjectPicker}
+                          className="w-full py-2 px-3 rounded-lg text-xs font-semibold bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white shadow-md flex items-center justify-center gap-1.5 transition-all"
+                        >
+                          <Crosshair className="w-3.5 h-3.5" />
+                          {isEn ? 'Pick UI Object from Screen' : '화면에서 UI 오브젝트 선택'}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* 모드 C: 웹 브라우저 요소 존재 여부 */}
+                {condMode === 'web_element_exists' && (
+                  <div className="space-y-3">
+                    {renderWebElementPickerSection('selector')}
+                    <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-2.5">
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="text-[10px] text-slate-400 block mb-1">
+                            {isEn ? 'Selector Type' : '식별자 방식'}
+                          </label>
+                          <select
+                            value={cfg.selector_type || 'auto'}
+                            onChange={(e) => handleConfigChange('selector_type', e.target.value)}
+                            className="w-full px-2 py-1 text-xs bg-slate-900 border border-slate-700 rounded text-slate-200"
+                          >
+                            <option value="auto">자동 감지 (Auto)</option>
+                            <option value="css">CSS Selector</option>
+                            <option value="xpath">XPath</option>
+                            <option value="text">텍스트 일치</option>
+                            <option value="placeholder">Placeholder</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="text-[10px] text-slate-400 block mb-1">
+                            {isEn ? 'Wait Timeout (sec)' : '탐색 대기 시간(초)'}
+                          </label>
+                          <input
+                            type="number"
+                            min="0.2"
+                            max="60"
+                            step="0.5"
+                            value={cfg.timeout ?? 2.0}
+                            onChange={(e) =>
+                              handleConfigChange('timeout', Math.max(0.2, Number(e.target.value) || 2.0))
+                            }
+                            className="w-full px-2 py-1 text-xs bg-slate-900 border border-slate-700 rounded text-slate-200 font-mono"
+                          />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="text-[10px] text-slate-400 block mb-1">
+                          {isEn ? 'Target Selector / Text' : '확인할 웹 요소 선택자 또는 텍스트'}
+                        </label>
+                        <input
+                          type="text"
+                          data-config-key="selector"
+                          value={cfg.selector ?? ''}
+                          onChange={(e) => handleConfigChange('selector', e.target.value)}
+                          placeholder={isEn ? 'e.g. #login-btn or 로그인' : '예: #login-btn 또는 로그인 완료'}
+                          className="w-full px-2.5 py-1.5 text-xs bg-slate-900 border border-slate-700 rounded-lg text-cyan-200 font-mono focus:outline-none focus:border-cyan-500"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* 분기 포트 연결 안내 */}
+                <div className="p-2.5 rounded-xl bg-amber-950/30 border border-amber-800/60 text-[10px] text-slate-300 space-y-1">
+                  <div className="font-semibold text-amber-300">
+                    💡 {isEn ? 'How to connect True / False branches' : '참(True) / 거짓(False) 분기 연결 안내'}
+                  </div>
+                  <p className="leading-relaxed">
+                    {isEn
+                      ? 'Connect the bottom-left [True] handle (green) to the node to run when satisfied, and the bottom-right [False] handle (red) to the node to run when not satisfied. Both paths can merge back into a downstream node.'
+                      : '노드 하단 좌측의 초록색 [참(True)] 핸들과 하단 우측의 빨간색 [거짓(False)] 핸들에서 각각 아래쪽 다음 노드로 선을 연결하세요. 분기된 두 경로는 이후 하나의 노드로 다시 합류(다중 연결)할 수 있습니다.'}
+                  </p>
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* 10. 반복 실행 노드 (flow_loop) */}
+          {isLoop && (() => {
+            const loopMode = String(cfg.loop_mode || 'count').trim().toLowerCase();
+
+            return (
+              <div className="space-y-4">
+                <div>
+                  <label className="text-[11px] font-semibold text-violet-300 block mb-1.5">
+                    {isEn ? 'Loop Mode' : '반복 실행 방식'}
+                  </label>
+                  <div className="grid grid-cols-2 gap-1.5 p-1 bg-slate-950 rounded-xl border border-slate-800">
+                    <button
+                      type="button"
+                      onClick={() => handleConfigChange('loop_mode', 'count')}
+                      className={`py-1.5 px-2 text-xs rounded-lg font-semibold transition-all ${
+                        loopMode === 'count'
+                          ? 'bg-violet-600 text-white shadow'
+                          : 'text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      {isEn ? '🔢 Count (N times)' : '🔢 지정 횟수 반복'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleConfigChange('loop_mode', 'infinite')}
+                      className={`py-1.5 px-2 text-xs rounded-lg font-semibold transition-all ${
+                        loopMode === 'infinite'
+                          ? 'bg-cyan-600 text-white shadow'
+                          : 'text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      {isEn ? '♾️ Infinite (24h)' : '♾️ 무한 반복(모니터링)'}
+                    </button>
+                  </div>
+                </div>
+
+                {loopMode === 'count' ? (
+                  <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-2.5">
+                    <label className="text-[11px] text-slate-300 font-medium block">
+                      {isEn
+                        ? 'Repeat Count N (Number or {{variable}})'
+                        : '반복 횟수 N (숫자 또는 {{변수명}} 입력 가능)'}
+                    </label>
+                    <input
+                      type="text"
+                      data-config-key="loop_count"
+                      value={cfg.loop_count ?? 3}
+                      onChange={(e) => handleConfigChange('loop_count', e.target.value)}
+                      placeholder="3"
+                      className="w-full px-2.5 py-1.5 text-xs bg-slate-900 border border-slate-700 rounded-lg text-violet-200 font-mono focus:outline-none focus:border-violet-500"
+                    />
+                    <div className="flex items-center gap-1 pt-0.5">
+                      {[3, 5, 10, 50, 100].map((cnt) => (
+                        <button
+                          key={cnt}
+                          type="button"
+                          onClick={() => handleConfigChange('loop_count', cnt)}
+                          className={`px-2 py-0.5 rounded text-[10px] font-mono border transition-colors ${
+                            String(cfg.loop_count) === String(cnt)
+                              ? 'bg-violet-600/40 text-violet-200 border-violet-500'
+                              : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200'
+                          }`}
+                        >
+                          {cnt}회
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="p-3 rounded-xl bg-cyan-950/30 border border-cyan-700/60 space-y-1.5 text-[11px] text-cyan-200">
+                    <div className="font-semibold text-cyan-300">
+                      ♾️ {isEn ? '24-Hour Continuous Monitoring Mode' : '24시간 상시 모니터링 무한 반복 모드'}
+                    </div>
+                    <p className="text-[10px] text-slate-300 leading-relaxed">
+                      {isEn
+                        ? 'Continuously follows the [Loop] handle until stopped via F12 or a condition branch exits to End. For long runs exceeding 1,000 steps, enable "Unlimited Steps" in Workflow Settings.'
+                        : '사용자가 F12 비상정지를 누르거나 루프 내부의 [조건 분기] 노드가 끝 노드로 탈출하기 전까지 계속 [반복(Loop)] 경로를 순환합니다. 장시간 실행 시 상단 [워크플로우 설정]에서 "무제한 스텝 허용"을 켜주세요.'}
+                    </p>
+                  </div>
+                )}
+
+                {/* 선택적 회차 저장 변수 */}
+                <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-1.5">
+                  <label className="text-[11px] text-slate-300 font-medium block">
+                    {isEn
+                      ? 'Save Iteration Index to Variable (Optional)'
+                      : '현재 반복 회차 저장 변수 (선택사항)'}
+                  </label>
+                  <select
+                    value={cfg.output_variable || ''}
+                    onChange={(e) => handleConfigChange('output_variable', e.target.value)}
+                    className="w-full px-2.5 py-1.5 text-xs bg-slate-900 border border-slate-700 rounded-lg text-emerald-300 font-mono focus:outline-none focus:border-violet-500"
+                  >
+                    <option value="">
+                      {isEn
+                        ? '-- Use default {{loop_index}} system variable --'
+                        : '-- 별도 변수 미사용 (기본 {{loop_index}} 시스템 변수 자동 제공) --'}
+                    </option>
+                    {variables
+                      .filter((v) => v.type === 'number' || v.type === 'string')
+                      .map((v) => (
+                        <option key={v.name} value={v.name}>
+                          {v.name} ({v.type})
+                        </option>
+                      ))}
+                  </select>
+                </div>
+
+                {/* 루프 핸들 연결 가이드 */}
+                <div className="p-2.5 rounded-xl bg-violet-950/30 border border-violet-800/60 text-[10px] text-slate-300 space-y-1">
+                  <div className="font-semibold text-violet-300">
+                    🔁 {isEn ? 'How to build a Loop circuit' : '반복(Loop) 회로 연결 방법'}
+                  </div>
+                  <ol className="list-decimal list-inside space-y-0.5 leading-relaxed">
+                    <li>
+                      {isEn
+                        ? 'Connect the bottom-left [Loop] handle (cyan) to the first node of the repeated task.'
+                        : '하단 좌측 [반복(Loop)] 핸들에서 반복할 첫 번째 작업 노드로 연결합니다.'}
+                    </li>
+                    <li>
+                      {isEn
+                        ? 'Connect the bottom output of the last repeated task back up to this Loop node’s top input handle.'
+                        : '반복할 마지막 작업 노드의 하단 출력을 다시 이 [반복 실행] 노드의 상단 입력 핸들로 연결합니다.'}
+                    </li>
+                    <li>
+                      {isEn
+                        ? 'Connect the bottom-right [Exit] handle (purple) to the next step after the loop finishes.'
+                        : '하단 우측 [종료(Exit)] 핸들에서 반복이 모두 끝난 후 실행할 다음 노드로 연결합니다.'}
+                    </li>
+                  </ol>
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* 11. 변수 값 설정 / 연산 노드 (flow_set_variable) */}
+          {isSetVariable && (() => {
+            const targetVar = String(cfg.target_variable || cfg.output_variable || '').trim();
+            const op = String(cfg.operation || 'set').trim().toLowerCase();
+
+            return (
+              <div className="space-y-4">
+                <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-3">
+                  <div>
+                    <label className="text-[11px] font-semibold text-emerald-300 block mb-1">
+                      {isEn ? 'Target Variable to Update' : '값을 변경할 대상 변수'}
+                    </label>
+                    <select
+                      value={targetVar}
+                      onChange={(e) => handleConfigChange('target_variable', e.target.value)}
+                      className="w-full px-2.5 py-1.5 text-xs bg-slate-900 border border-slate-700 rounded-lg text-emerald-300 font-mono focus:outline-none focus:border-emerald-500"
+                    >
+                      <option value="">
+                        {isEn ? '-- Select a declared variable --' : '-- 선언된 변수 선택 --'}
+                      </option>
+                      {variables.map((v) => (
+                        <option key={v.name} value={v.name}>
+                          {v.name} ({v.type})
+                        </option>
+                      ))}
+                    </select>
+                    {variables.length === 0 && (
+                      <p className="text-[10px] text-amber-400 mt-1">
+                        {isEn
+                          ? 'Declare a variable in the bottom Variable Manager panel first.'
+                          : '하단 [변수 관리] 패널에서 먼저 변수를 선언해 주세요.'}
+                      </p>
+                    )}
+                  </div>
+
+                  <div>
+                    <label className="text-[11px] text-slate-300 font-medium block mb-1">
+                      {isEn ? 'Operation' : '연산 방식'}
+                    </label>
+                    <select
+                      value={op}
+                      onChange={(e) => handleConfigChange('operation', e.target.value)}
+                      className="w-full px-2.5 py-1.5 text-xs bg-slate-900 border border-slate-700 rounded-lg text-slate-200 focus:outline-none focus:border-emerald-500"
+                    >
+                      <option value="set">= 값 대입 (Set Value)</option>
+                      <option value="increment">+= 숫자 증가 (Increment)</option>
+                      <option value="decrement">-= 숫자 감소 (Decrement)</option>
+                      <option value="append">+= 문자열 뒤에 이어붙이기 (Append String)</option>
+                      <option value="toggle">⇄ 불리언 반전 (True ⇄ False Toggle)</option>
+                    </select>
+                  </div>
+
+                  {op !== 'toggle' && (
+                    <div>
+                      <label className="text-[11px] text-slate-300 font-medium block mb-1">
+                        {op === 'increment' || op === 'decrement'
+                          ? isEn
+                            ? 'Step Amount (Default: 1)'
+                            : '증감할 숫자 값 (기본값: 1)'
+                          : isEn
+                          ? 'Value to Assign / Append (Supports {{variable}})'
+                          : '대입/결합할 값 ({{변수명}} 템플릿 지원)'}
+                      </label>
+                      <input
+                        type="text"
+                        data-config-key="value"
+                        value={cfg.value ?? ''}
+                        onChange={(e) => handleConfigChange('value', e.target.value)}
+                        placeholder={
+                          op === 'increment' || op === 'decrement'
+                            ? '1'
+                            : isEn
+                            ? 'Enter value or {{variable}}'
+                            : '값 또는 {{last_output}} 입력'
+                        }
+                        className="w-full px-2.5 py-1.5 text-xs bg-slate-900 border border-slate-700 rounded-lg text-slate-100 font-mono focus:outline-none focus:border-emerald-500"
+                      />
+                    </div>
+                  )}
                 </div>
               </div>
             );

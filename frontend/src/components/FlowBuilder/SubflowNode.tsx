@@ -58,10 +58,10 @@ const SubflowNode: React.FC<NodeProps> = ({ id, data, selected }) => {
         </button>
       )}
 
-      {/* Left Input Handle (target) */}
+      {/* Top Input Handle (target) */}
       <Handle
         type="target"
-        position={Position.Left}
+        position={Position.Top}
         id="target"
         className="!w-3.5 !h-3.5 !bg-cyan-500 !border-2 !border-slate-900 !z-20 transition-all hover:scale-125 hover:!bg-cyan-400 cursor-crosshair"
       />
@@ -137,10 +137,10 @@ const SubflowNode: React.FC<NodeProps> = ({ id, data, selected }) => {
         </div>
       )}
 
-      {/* Right Output Handle (source) */}
+      {/* Bottom Output Handle (source) */}
       <Handle
         type="source"
-        position={Position.Right}
+        position={Position.Bottom}
         id="source"
         className="!w-3.5 !h-3.5 !bg-cyan-500 !border-2 !border-slate-900 !z-20 transition-all hover:scale-125 hover:!bg-cyan-400 cursor-crosshair"
       />

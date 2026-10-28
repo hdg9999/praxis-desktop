@@ -141,6 +141,18 @@ class ScreenCaptureService:
             method=4
         )
 
+        # 장기 실행(24시간 모니터링 무한루프 등) 시 단일 세션 폴더 디스크 폭증 방지 (최대 200장 Rolling Retention)
+        try:
+            all_shots = sorted(session_dir.glob("*.webp"), key=lambda p: p.stat().st_mtime)
+            if len(all_shots) > 200:
+                for old_shot in all_shots[:-200]:
+                    try:
+                        old_shot.unlink(missing_ok=True)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
         return f"/api/static/screenshots/{session_id}/{filename}"
 
 def copy_image_to_clipboard(image: Image.Image) -> bool:
