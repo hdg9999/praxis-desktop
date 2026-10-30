@@ -193,7 +193,7 @@ export const FlowSettingsModal: React.FC<FlowSettingsModalProps> = ({
         execution_delay: Number(safeDelay.toFixed(2)),
         default_llm_model: defaultLlmModel.trim(),
         default_num_ctx: Math.max(1024, Math.min(131072, Number(defaultNumCtx) || 8192)),
-        max_total_steps: Math.max(50, Math.min(1000000, Number(maxTotalSteps) || 1000)),
+        max_total_steps: Math.max(1, Math.min(10000000, Number(maxTotalSteps) || 1000)),
         unlimited_steps: unlimitedSteps,
         global_error_handler: {
           mode: errorMode,
@@ -417,9 +417,12 @@ export const FlowSettingsModal: React.FC<FlowSettingsModalProps> = ({
                 type="number"
                 min="1024"
                 max="131072"
-                step="1024"
-                value={defaultNumCtx}
-                onChange={(e) => setDefaultNumCtx(Math.max(1024, Number(e.target.value) || 8192))}
+                step="any"
+                value={defaultNumCtx || ''}
+                onChange={(e) => {
+                  const val = e.target.value === '' ? 0 : parseInt(e.target.value, 10);
+                  setDefaultNumCtx(isNaN(val) ? 0 : Math.max(0, val));
+                }}
                 className="w-32 px-3 py-1.5 text-xs font-mono text-right bg-slate-900 border border-cyan-800/60 rounded-lg text-cyan-200 focus:outline-none focus:border-cyan-500"
               />
               <div className="flex items-center gap-1 flex-1 overflow-x-auto py-0.5">
@@ -469,11 +472,13 @@ export const FlowSettingsModal: React.FC<FlowSettingsModalProps> = ({
               <div className="flex items-center gap-2">
                 <input
                   type="number"
-                  min="50"
-                  max="1000000"
-                  step="100"
-                  value={maxTotalSteps}
-                  onChange={(e) => setMaxTotalSteps(Math.max(50, Number(e.target.value) || 1000))}
+                  min="1"
+                  step="1"
+                  value={maxTotalSteps || ''}
+                  onChange={(e) => {
+                    const val = e.target.value === '' ? 0 : parseInt(e.target.value, 10);
+                    setMaxTotalSteps(isNaN(val) ? 0 : Math.max(0, val));
+                  }}
                   className="w-32 px-3 py-1.5 text-xs font-mono text-right bg-slate-900 border border-violet-800/60 rounded-lg text-violet-200 focus:outline-none focus:border-violet-500"
                 />
                 <div className="flex items-center gap-1 flex-1 overflow-x-auto py-0.5">
